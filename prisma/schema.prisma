@@ -1,0 +1,1252 @@
+// Government Budget Management System — PostgreSQL schema.
+//
+// Conventions
+// - Table names are snake_case plurals (see @@map). Column names are camelCase.
+// - Money is stored as numeric(18,2) in the configured budget currency (USD).
+// - Reference data (MDAs, codes, categories, lookups, years) is kept separate from
+//   transaction data (submissions, lines, execution, commitments).
+// - Approved budgets are immutable: see the triggers in the migrations folder.
+// - Views `revenue_codes`, `expenditure_codes`, `revenue_lines` and `expenditure_lines`
+//   are created in SQL on top of `budget_codes` and `budget_lines`.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum BudgetKind {
+  REVENUE
+  EXPENDITURE
+}
+
+enum BudgetYearStatus {
+  DRAFT
+  PREPARATION
+  REVIEW
+  APPROVED
+  PUBLISHED
+  ACTIVE
+  CLOSED
+}
+
+enum SubmissionStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  RECOMMENDED
+  ENDORSED
+  RETURNED
+  APPROVED
+  REJECTED
+  PUBLISHED
+}
+
+enum SubmissionType {
+  ORIGINAL
+  REVISION
+}
+
+enum RevisionType {
+  SUPPLEMENTARY
+  REALLOCATION
+  BUDGET_CUT
+  BUDGET_INCREASE
+  AGENCY_ADJUSTMENT
+}
+
+enum DataSource {
+  MANUAL
+  IMPORT
+  DEV_SEED
+  SYSTEM
+}
+
+enum SummaryGroup {
+  PERSONNEL
+  GOODS_SERVICES
+  CAPITAL
+  OTHER
+}
+
+enum LookupCategory {
+  AGENCY_TYPE
+  REGION
+  MDA_CATEGORY
+  FUNDING_SOURCE
+  PROCUREMENT_METHOD
+}
+
+enum Quarter {
+  Q1
+  Q2
+  Q3
+  Q4
+}
+
+enum FormCode {
+  A
+  B
+  C
+  D
+  E
+  F
+  G
+  H
+  VALIDATION
+  CERTIFICATION
+  GENERAL
+}
+
+enum ProjectStatus {
+  PROPOSED
+  UNDER_REVIEW
+  APPROVED
+  ACTIVE
+  COMPLETED
+  SUSPENDED
+  CANCELLED
+}
+
+enum ProjectType {
+  NEW
+  ONGOING
+}
+
+enum FundingType {
+  GOVERNMENT
+  DONOR
+  MIXED
+}
+
+enum ValidationSeverity {
+  ERROR
+  WARNING
+  INFO
+}
+
+enum CheckStatus {
+  PASS
+  WARNING
+  ERROR
+}
+
+enum WorkflowStage {
+  PREPARATION
+  BUDGET_OFFICER_REVIEW
+  DIRECTOR_REVIEW
+  FINAL_APPROVAL
+  PUBLICATION
+}
+
+enum WorkflowAction {
+  CREATE
+  SUBMIT
+  RESUBMIT
+  START_REVIEW
+  RECOMMEND
+  ENDORSE
+  APPROVE
+  REJECT
+  RETURN
+  PUBLISH
+  REOPEN
+  ASSIGN
+  REVISION_CREATED
+  WITHDRAW
+}
+
+enum ReviewDecision {
+  RECOMMEND
+  ENDORSE
+  APPROVE
+  REJECT
+  RETURN
+}
+
+enum CorrectionStatus {
+  OPEN
+  RESOLVED
+  ACCEPTED
+  REOPENED
+}
+
+enum AttachmentCategory {
+  BUDGET_JUSTIFICATION
+  PROJECT_PROPOSAL
+  PROCUREMENT_DOCUMENT
+  STAFFING_JUSTIFICATION
+  APPROVAL_LETTER
+  OFFICIAL_STAMP
+  SIGNED_CERTIFICATION
+  OTHER
+}
+
+enum NotificationType {
+  BUDGET_SUBMITTED
+  BUDGET_RETURNED
+  BUDGET_APPROVED
+  BUDGET_REJECTED
+  BUDGET_PUBLISHED
+  CORRECTION_REQUIRED
+  CORRECTION_RESOLVED
+  DEADLINE_APPROACHING
+  REVIEW_ASSIGNED
+  REVIEW_STAGE_ADVANCED
+  IMPORT_COMPLETED
+  VALIDATION_ERROR
+  COMMENT_ADDED
+  SYSTEM
+}
+
+enum CommitmentStatus {
+  COMMITTED
+  OBLIGATED
+  LIQUIDATED
+  CANCELLED
+}
+
+enum ImportStatus {
+  UPLOADED
+  MAPPED
+  VALIDATED
+  IMPORTING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ImportRowStatus {
+  VALID
+  WARNING
+  ERROR
+  DUPLICATE
+  SKIPPED
+  IMPORTED
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  LOGIN_FAILED
+  PASSWORD_CHANGE
+  CREATE
+  UPDATE
+  DELETE
+  RESTORE
+  SUBMIT
+  RETURN
+  RECOMMEND
+  ENDORSE
+  APPROVE
+  REJECT
+  PUBLISH
+  REOPEN
+  CERTIFY
+  IMPORT
+  EXPORT
+  PERMISSION_CHANGE
+  VALIDATE
+  ASSIGN
+}
+
+enum MdaAssignmentType {
+  BUDGET_OFFICER
+  FINANCE_OFFICER
+  ACCOUNTING_OFFICER
+  REVIEWER
+  VIEWER
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity, RBAC and sessions
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  username           String    @unique
+  fullName           String
+  jobTitle           String?
+  phone              String?
+  passwordHash       String
+  locale             String    @default("en")
+  isActive           Boolean   @default(true)
+  mustChangePassword Boolean   @default(false)
+  failedLoginCount   Int       @default(0)
+  lockedUntil        DateTime?
+  lastLoginAt        DateTime?
+  passwordChangedAt  DateTime?
+  isDevSeed          Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  roles           UserRole[]
+  sessions        Session[]
+  mdaAssignments  UserMdaAssignment[]
+  notifications   Notification[]
+  comments        Comment[]
+  attachments     Attachment[]
+  approvalSteps   ApprovalStep[]
+  reviews         BudgetReview[]
+  versions        BudgetVersion[]
+  auditLogs       AuditLog[]
+  savedReports    SavedReport[]
+  imports         Import[]
+  reviewerFor     BudgetSubmission[] @relation("AssignedReviewer")
+  submittedBudget BudgetSubmission[] @relation("SubmittedBy")
+  approvedBudget  BudgetSubmission[] @relation("ApprovedBy")
+
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  nameSo      String?
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(cuid())
+  key         String  @unique
+  name        String
+  group       String
+  description String?
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId    String
+  roleId    String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model UserMdaAssignment {
+  id        String            @id @default(cuid())
+  userId    String
+  mdaId     String
+  type      MdaAssignmentType
+  createdAt DateTime          @default(now())
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mda       Mda               @relation(fields: [mdaId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, mdaId, type])
+  @@index([mdaId])
+  @@map("user_mda_assignments")
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  expiresAt  DateTime
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model RateLimit {
+  key     String   @id
+  count   Int
+  resetAt DateTime
+
+  @@map("rate_limits")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reference data
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Sector {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  nameEn    String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  mdas Mda[]
+
+  @@map("sectors")
+}
+
+model LookupValue {
+  id        String         @id @default(cuid())
+  category  LookupCategory
+  code      String
+  name      String
+  nameEn    String?
+  sortOrder Int            @default(0)
+  isActive  Boolean        @default(true)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  mdasByType        Mda[]             @relation("MdaAgencyType")
+  mdasByRegion      Mda[]             @relation("MdaRegion")
+  mdasByCategory    Mda[]             @relation("MdaCategory")
+  projectsByFunding CapitalProject[]
+  procurementPlans  ProcurementPlan[]
+
+  @@unique([category, code])
+  @@map("lookup_values")
+}
+
+model Mda {
+  id                String    @id @default(cuid())
+  code              String    @unique
+  name              String
+  nameEn            String?
+  shortName         String?
+  sectorId          String
+  parentId          String?
+  agencyTypeId      String?
+  regionId          String?
+  categoryId        String?
+  accountingOfficer String?
+  financeDirector   String?
+  budgetOfficer     String?
+  contactPerson     String?
+  phone             String?
+  email             String?
+  address           String?
+  isActive          Boolean   @default(true)
+  isDevSeed         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  sector      Sector       @relation(fields: [sectorId], references: [id])
+  parent      Mda?         @relation("MdaHierarchy", fields: [parentId], references: [id])
+  children    Mda[]        @relation("MdaHierarchy")
+  agencyType  LookupValue? @relation("MdaAgencyType", fields: [agencyTypeId], references: [id])
+  region      LookupValue? @relation("MdaRegion", fields: [regionId], references: [id])
+  category    LookupValue? @relation("MdaCategory", fields: [categoryId], references: [id])
+
+  assignments         UserMdaAssignment[]
+  submissions         BudgetSubmission[]
+  capitalProjects     CapitalProject[]
+  allocations         BudgetAllocation[]
+  expenditureExecution ExpenditureExecution[]
+  revenueExecution    RevenueExecution[]
+  commitments         Commitment[]
+
+  @@index([sectorId])
+  @@index([isActive])
+  @@map("mdas")
+}
+
+model BudgetYear {
+  id                 String           @id @default(cuid())
+  year               Int              @unique
+  name               String
+  startDate          DateTime         @db.Date
+  endDate            DateTime         @db.Date
+  preparationStart   DateTime?        @db.Date
+  preparationEnd     DateTime?        @db.Date
+  submissionDeadline DateTime?        @db.Date
+  reviewStart        DateTime?        @db.Date
+  reviewEnd          DateTime?        @db.Date
+  approvalStart      DateTime?        @db.Date
+  approvalEnd        DateTime?        @db.Date
+  executionStart     DateTime?        @db.Date
+  executionEnd       DateTime?        @db.Date
+  closingDate        DateTime?        @db.Date
+  status             BudgetYearStatus @default(DRAFT)
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  submissions          BudgetSubmission[]
+  allocations          BudgetAllocation[]
+  expenditureExecution ExpenditureExecution[]
+  revenueExecution     RevenueExecution[]
+  commitments          Commitment[]
+  imports              Import[]
+
+  @@map("budget_years")
+}
+
+/// Reporting categories used by the official forms (Form B/C/D groupings).
+model BudgetCategory {
+  id                  String        @id @default(cuid())
+  code                String        @unique
+  name                String
+  nameSo              String
+  kind                BudgetKind
+  summaryGroup        SummaryGroup?
+  isCapital           Boolean       @default(false)
+  procurementEligible Boolean       @default(false)
+  defaultCodeId       String?
+  sortOrder           Int           @default(0)
+  isActive            Boolean       @default(true)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  codes            BudgetCode[]
+  procurementPlans ProcurementPlan[]
+
+  @@map("budget_categories")
+}
+
+/// Hierarchical chart of accounts for revenue and expenditure classification.
+model BudgetCode {
+  id                String         @id @default(cuid())
+  code              String
+  name              String
+  nameEn            String?
+  description       String?
+  kind              BudgetKind
+  parentId          String?
+  level             Int
+  path              String
+  categoryId        String?
+  isPostable        Boolean        @default(true)
+  isActive          Boolean        @default(true)
+  effectiveFromYear Int
+  effectiveToYear   Int?
+  sortOrder         Int            @default(0)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  parent       BudgetCode?     @relation("CodeTree", fields: [parentId], references: [id])
+  children     BudgetCode[]    @relation("CodeTree")
+  category     BudgetCategory? @relation(fields: [categoryId], references: [id])
+  lines        BudgetLine[]
+  personnel    PersonnelBudget[]
+  allocations  BudgetAllocation[]
+  expenditureExecution ExpenditureExecution[]
+  revenueExecution     RevenueExecution[]
+  commitments  Commitment[]
+  mappings     CodeMapping[]
+
+  @@unique([kind, code, effectiveFromYear])
+  @@index([kind, path])
+  @@index([parentId])
+  @@index([categoryId])
+  @@map("budget_codes")
+}
+
+/// Crosswalk from codes used in legacy/source documents to the current chart of accounts.
+model CodeMapping {
+  id           String     @id @default(cuid())
+  scheme       String
+  sourceCode   String
+  sourceName   String?
+  targetCodeId String
+  notes        String?
+  createdAt    DateTime   @default(now())
+  targetCode   BudgetCode @relation(fields: [targetCodeId], references: [id])
+
+  @@unique([scheme, sourceCode])
+  @@map("code_mappings")
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+
+  @@map("system_settings")
+}
+
+model ValidationRule {
+  id          String             @id @default(cuid())
+  code        String             @unique
+  name        String
+  nameSo      String
+  description String
+  severity    ValidationSeverity
+  isActive    Boolean            @default(true)
+  tolerance   Decimal            @default(1) @db.Decimal(18, 2)
+  params      Json?
+  form        FormCode
+  field       String?
+  sortOrder   Int                @default(0)
+  updatedAt   DateTime           @updatedAt
+
+  @@map("validation_rules")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Budget preparation (transaction data)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model BudgetSubmission {
+  id                 String           @id @default(cuid())
+  budgetYearId       String
+  mdaId              String
+  type               SubmissionType   @default(ORIGINAL)
+  revisionType       RevisionType?
+  revisionNumber     Int              @default(0)
+  parentSubmissionId String?
+  revisionReason     String?
+  status             SubmissionStatus @default(DRAFT)
+  source             DataSource       @default(MANUAL)
+
+  // Form A — agency summary (captured per submission; defaults from the MDA record)
+  allocationNumber  String?
+  agencyCategory    String?
+  accountingOfficer String?
+  contactPerson     String?
+  telephone         String?
+  email             String?
+
+  assignedReviewerId String?
+  submittedAt        DateTime?
+  submittedById      String?
+  approvedAt         DateTime?
+  approvedById       String?
+  publishedAt        DateTime?
+  rejectedAt         DateTime?
+  isLocked           Boolean   @default(false)
+  supersededAt       DateTime?
+  supersededById     String?
+
+  // Server-computed summaries (recalculated on every change; never entered by users)
+  totalRevenue       Decimal   @default(0) @db.Decimal(18, 2)
+  totalExpenditure   Decimal   @default(0) @db.Decimal(18, 2)
+  totalRecurrent     Decimal   @default(0) @db.Decimal(18, 2)
+  totalPersonnel     Decimal   @default(0) @db.Decimal(18, 2)
+  totalCapital       Decimal   @default(0) @db.Decimal(18, 2)
+  completion         Int       @default(0)
+  validationErrors   Int       @default(0)
+  validationWarnings Int       @default(0)
+  validationPassed   Int       @default(0)
+  lastValidatedAt    DateTime?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  budgetYear       BudgetYear         @relation(fields: [budgetYearId], references: [id])
+  mda              Mda                @relation(fields: [mdaId], references: [id])
+  parentSubmission BudgetSubmission?  @relation("Revisions", fields: [parentSubmissionId], references: [id])
+  revisions        BudgetSubmission[] @relation("Revisions")
+  assignedReviewer User?              @relation("AssignedReviewer", fields: [assignedReviewerId], references: [id])
+  submittedBy      User?              @relation("SubmittedBy", fields: [submittedById], references: [id])
+  approvedBy       User?              @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  versions       BudgetVersion[]
+  lines          BudgetLine[]
+  personnel      PersonnelBudget[]
+  procurement    ProcurementPlan[]
+  cashFlow       CashFlowForecast[]
+  notes          SubmissionNote[]
+  certification  Certification?
+  checks         ValidationCheck[]
+  approvalSteps  ApprovalStep[]
+  reviews        BudgetReview[]
+  corrections    CorrectionItem[]
+  comments       Comment[]
+  attachments    Attachment[]
+  allocations    BudgetAllocation[]
+
+  @@unique([budgetYearId, mdaId, revisionNumber])
+  @@index([status])
+  @@index([mdaId])
+  @@index([assignedReviewerId])
+  @@map("budget_submissions")
+}
+
+model BudgetVersion {
+  id            String           @id @default(cuid())
+  submissionId  String
+  versionNumber Int
+  label         String
+  status        SubmissionStatus
+  reason        String?
+  snapshot      Json
+  totals        Json
+  changes       Json?
+  isImmutable   Boolean          @default(false)
+  createdById   String?
+  createdAt     DateTime         @default(now())
+
+  submission BudgetSubmission @relation(fields: [submissionId], references: [id])
+  createdBy  User?            @relation(fields: [createdById], references: [id])
+  steps      ApprovalStep[]
+
+  @@unique([submissionId, versionNumber])
+  @@map("budget_versions")
+}
+
+/// Revenue and expenditure lines. Capital allocations are expenditure lines linked to a project.
+model BudgetLine {
+  id                  String     @id @default(cuid())
+  submissionId        String
+  budgetCodeId        String
+  kind                BudgetKind
+  capitalProjectId    String?
+  description         String?
+  amount              Decimal    @default(0) @db.Decimal(18, 2)
+  priorYearActual     Decimal?   @db.Decimal(18, 2)
+  currentYearEstimate Decimal?   @db.Decimal(18, 2)
+  justification       String?
+  sortOrder           Int        @default(0)
+  source              DataSource @default(MANUAL)
+  sourceRef           String?
+  createdById         String?
+  updatedById         String?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  submission     BudgetSubmission @relation(fields: [submissionId], references: [id])
+  budgetCode     BudgetCode       @relation(fields: [budgetCodeId], references: [id])
+  capitalProject CapitalProject?  @relation(fields: [capitalProjectId], references: [id])
+
+  @@index([submissionId, kind])
+  @@index([budgetCodeId])
+  @@index([capitalProjectId])
+  @@map("budget_lines")
+}
+
+/// Form E — personnel establishment and cost.
+model PersonnelBudget {
+  id                    String   @id @default(cuid())
+  submissionId          String
+  positionTitle         String
+  grade                 String?
+  department            String?
+  budgetCodeId          String?
+  approvedEstablishment Int      @default(0)
+  filledPositions       Int      @default(0)
+  monthlyCost           Decimal  @default(0) @db.Decimal(18, 2)
+  annualCost            Decimal  @default(0) @db.Decimal(18, 2)
+  remarks               String?
+  sortOrder             Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  submission BudgetSubmission @relation(fields: [submissionId], references: [id])
+  budgetCode BudgetCode?      @relation(fields: [budgetCodeId], references: [id])
+
+  @@index([submissionId])
+  @@map("personnel_budgets")
+}
+
+/// Form F — capital investment project register (multi-year).
+model CapitalProject {
+  id                     String        @id @default(cuid())
+  mdaId                  String
+  projectCode            String?
+  name                   String
+  location               String?
+  description            String?
+  justification          String?
+  totalCost              Decimal       @default(0) @db.Decimal(18, 2)
+  spentToDate            Decimal       @default(0) @db.Decimal(18, 2)
+  fundingSourceId        String?
+  fundingType            FundingType   @default(GOVERNMENT)
+  projectType            ProjectType   @default(NEW)
+  isMultiYear            Boolean       @default(false)
+  startYear              Int?
+  expectedCompletionDate DateTime?     @db.Date
+  status                 ProjectStatus @default(PROPOSED)
+  isDevSeed              Boolean       @default(false)
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  deletedAt              DateTime?
+
+  mda           Mda               @relation(fields: [mdaId], references: [id])
+  fundingSource LookupValue?      @relation(fields: [fundingSourceId], references: [id])
+  lines         BudgetLine[]
+  procurement   ProcurementPlan[]
+  allocations   BudgetAllocation[]
+
+  @@index([mdaId])
+  @@index([status])
+  @@map("capital_projects")
+}
+
+/// Form G — annual procurement plan.
+model ProcurementPlan {
+  id                    String   @id @default(cuid())
+  submissionId          String
+  itemDescription       String
+  estimatedCost         Decimal  @default(0) @db.Decimal(18, 2)
+  procurementMethodId   String?
+  quarter               Quarter
+  responsibleDepartment String?
+  budgetCategoryId      String?
+  capitalProjectId      String?
+  remarks               String?
+  sortOrder             Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  submission        BudgetSubmission @relation(fields: [submissionId], references: [id])
+  procurementMethod LookupValue?     @relation(fields: [procurementMethodId], references: [id])
+  budgetCategory    BudgetCategory?  @relation(fields: [budgetCategoryId], references: [id])
+  capitalProject    CapitalProject?  @relation(fields: [capitalProjectId], references: [id])
+
+  @@index([submissionId])
+  @@map("procurement_plans")
+}
+
+/// Form H — quarterly cash-flow forecast.
+model CashFlowForecast {
+  id           String   @id @default(cuid())
+  submissionId String
+  quarter      Quarter
+  amount       Decimal  @default(0) @db.Decimal(18, 2)
+  remarks      String?
+  updatedAt    DateTime @updatedAt
+
+  submission BudgetSubmission @relation(fields: [submissionId], references: [id])
+
+  @@unique([submissionId, quarter])
+  @@map("cash_flow_forecasts")
+}
+
+/// Explanations and justifications attached to form rows (e.g. Form B category explanations).
+model SubmissionNote {
+  id           String   @id @default(cuid())
+  submissionId String
+  form         FormCode
+  key          String
+  text         String
+  updatedById  String?
+  updatedAt    DateTime @updatedAt
+
+  submission BudgetSubmission @relation(fields: [submissionId], references: [id])
+
+  @@unique([submissionId, form, key])
+  @@map("submission_notes")
+}
+
+/// Official certification section (prepared / reviewed / approved sign-offs + HR certification).
+model Certification {
+  id                  String    @id @default(cuid())
+  submissionId        String    @unique
+  preparedByName      String?
+  preparedByTitle     String?
+  preparedById        String?
+  preparedAt          DateTime?
+  preparedSignature   String?
+  reviewedByName      String?
+  reviewedByTitle     String?
+  reviewedById        String?
+  reviewedAt          DateTime?
+  reviewedSignature   String?
+  approvedByName      String?
+  approvedByTitle     String?
+  approvedById        String?
+  approvedAt          DateTime?
+  approvedSignature   String?
+  hrCertifiedByName   String?
+  hrCertifiedById     String?
+  hrCertifiedAt       DateTime?
+  stampAttachmentId   String?
+  updatedAt           DateTime  @updatedAt
+
+  submission BudgetSubmission @relation(fields: [submissionId], references: [id])
+
+  @@map("certifications")
+}
+
+/// Results of the latest validation run for a submission.
+model ValidationCheck {
+  id           String      @id @default(cuid())
+  submissionId String
+  runId        String
+  ruleCode     String
+  name         String
+  status       CheckStatus
+  severity     ValidationSeverity
+  calculated   Decimal?    @db.Decimal(18, 2)
+  expected     Decimal?    @db.Decimal(18, 2)
+  difference   Decimal?    @db.Decimal(18, 2)
+  message      String
+  action       String?
+  form         FormCode
+  field        String?
+  sortOrder    Int         @default(0)
+  runAt        DateTime    @default(now())
+
+  submission BudgetSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId, runAt])
+  @@map("validation_checks")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Workflow
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ApprovalStep {
+  id           String            @id @default(cuid())
+  submissionId String
+  versionId    String?
+  stage        WorkflowStage
+  action       WorkflowAction
+  fromStatus   SubmissionStatus?
+  toStatus     SubmissionStatus
+  actorId      String?
+  actorName    String?
+  comment      String?
+  createdAt    DateTime          @default(now())
+
+  submission BudgetSubmission @relation(fields: [submissionId], references: [id])
+  version    BudgetVersion?   @relation(fields: [versionId], references: [id])
+  actor      User?            @relation(fields: [actorId], references: [id])
+
+  @@index([submissionId, createdAt])
+  @@map("approval_steps")
+}
+
+model BudgetReview {
+  id           String          @id @default(cuid())
+  submissionId String
+  stage        WorkflowStage
+  reviewerId   String
+  decision     ReviewDecision?
+  summary      String?
+  startedAt    DateTime        @default(now())
+  completedAt  DateTime?
+
+  submission  BudgetSubmission @relation(fields: [submissionId], references: [id])
+  reviewer    User             @relation(fields: [reviewerId], references: [id])
+  corrections CorrectionItem[]
+
+  @@index([submissionId])
+  @@map("budget_reviews")
+}
+
+model CorrectionItem {
+  id                 String           @id @default(cuid())
+  submissionId       String
+  reviewId           String?
+  form               FormCode
+  section            String?
+  field              String?
+  comment            String
+  requiredCorrection String
+  status             CorrectionStatus @default(OPEN)
+  resolutionNote     String?
+  resolvedById       String?
+  resolvedAt         DateTime?
+  verifiedById       String?
+  verifiedAt         DateTime?
+  createdById        String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  submission BudgetSubmission @relation(fields: [submissionId], references: [id])
+  review     BudgetReview?    @relation(fields: [reviewId], references: [id])
+
+  @@index([submissionId, status])
+  @@map("correction_items")
+}
+
+model Comment {
+  id           String    @id @default(cuid())
+  submissionId String
+  form         FormCode?
+  authorId     String
+  parentId     String?
+  body         String
+  createdAt    DateTime  @default(now())
+  editedAt     DateTime?
+  deletedAt    DateTime?
+
+  submission BudgetSubmission @relation(fields: [submissionId], references: [id])
+  author     User             @relation(fields: [authorId], references: [id])
+  parent     Comment?         @relation("CommentThread", fields: [parentId], references: [id])
+  replies    Comment[]        @relation("CommentThread")
+
+  @@index([submissionId, createdAt])
+  @@map("comments")
+}
+
+model Attachment {
+  id           String             @id @default(cuid())
+  submissionId String?
+  entityType   String
+  entityId     String
+  form         FormCode?
+  section      String?
+  category     AttachmentCategory @default(OTHER)
+  description  String?
+  fileName     String
+  mimeType     String
+  size         Int
+  sha256       String
+  storagePath  String
+  uploadedById String
+  uploadedAt   DateTime           @default(now())
+  deletedAt    DateTime?
+
+  submission BudgetSubmission? @relation(fields: [submissionId], references: [id])
+  uploadedBy User              @relation(fields: [uploadedById], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([submissionId])
+  @@map("attachments")
+}
+
+model Notification {
+  id         String           @id @default(cuid())
+  userId     String
+  type       NotificationType
+  title      String
+  body       String
+  link       String?
+  entityType String?
+  entityId   String?
+  dedupeKey  String?
+  isRead     Boolean          @default(false)
+  readAt     DateTime?
+  createdAt  DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Budget execution
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Execution baseline per MDA / code (original approved and revised budget, revenue targets).
+model BudgetAllocation {
+  id                   String     @id @default(cuid())
+  budgetYearId         String
+  mdaId                String
+  budgetCodeId         String
+  kind                 BudgetKind
+  capitalProjectId     String?
+  lineKey              String
+  originalAmount       Decimal    @default(0) @db.Decimal(18, 2)
+  revisedAmount        Decimal    @default(0) @db.Decimal(18, 2)
+  sourceSubmissionId   String
+  revisionSubmissionId String?
+  source               DataSource @default(SYSTEM)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  budgetYear       BudgetYear       @relation(fields: [budgetYearId], references: [id])
+  mda              Mda              @relation(fields: [mdaId], references: [id])
+  budgetCode       BudgetCode       @relation(fields: [budgetCodeId], references: [id])
+  capitalProject   CapitalProject?  @relation(fields: [capitalProjectId], references: [id])
+  sourceSubmission BudgetSubmission @relation(fields: [sourceSubmissionId], references: [id])
+
+  @@unique([budgetYearId, mdaId, kind, lineKey])
+  @@index([budgetYearId, kind])
+  @@map("budget_execution")
+}
+
+model ExpenditureExecution {
+  id            String     @id @default(cuid())
+  budgetYearId  String
+  mdaId         String
+  budgetCodeId  String
+  month         Int
+  plannedAmount Decimal    @default(0) @db.Decimal(18, 2)
+  actualAmount  Decimal    @default(0) @db.Decimal(18, 2)
+  remarks       String?
+  source        DataSource @default(MANUAL)
+  enteredById   String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  budgetYear BudgetYear @relation(fields: [budgetYearId], references: [id])
+  mda        Mda        @relation(fields: [mdaId], references: [id])
+  budgetCode BudgetCode @relation(fields: [budgetCodeId], references: [id])
+
+  @@unique([budgetYearId, mdaId, budgetCodeId, month])
+  @@index([budgetYearId, month])
+  @@map("expenditure_execution")
+}
+
+model RevenueExecution {
+  id           String     @id @default(cuid())
+  budgetYearId String
+  mdaId        String
+  budgetCodeId String
+  month        Int
+  targetAmount Decimal    @default(0) @db.Decimal(18, 2)
+  actualAmount Decimal    @default(0) @db.Decimal(18, 2)
+  remarks      String?
+  source       DataSource @default(MANUAL)
+  enteredById  String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  budgetYear BudgetYear @relation(fields: [budgetYearId], references: [id])
+  mda        Mda        @relation(fields: [mdaId], references: [id])
+  budgetCode BudgetCode @relation(fields: [budgetCodeId], references: [id])
+
+  @@unique([budgetYearId, mdaId, budgetCodeId, month])
+  @@index([budgetYearId, month])
+  @@map("revenue_execution")
+}
+
+model Commitment {
+  id             String           @id @default(cuid())
+  budgetYearId   String
+  mdaId          String
+  budgetCodeId   String
+  reference      String
+  description    String
+  supplier       String?
+  amount         Decimal          @db.Decimal(18, 2)
+  commitmentDate DateTime         @db.Date
+  status         CommitmentStatus @default(COMMITTED)
+  obligatedAt    DateTime?
+  liquidatedAt   DateTime?
+  cancelledAt    DateTime?
+  cancelReason   String?
+  source         DataSource       @default(MANUAL)
+  createdById    String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  budgetYear BudgetYear @relation(fields: [budgetYearId], references: [id])
+  mda        Mda        @relation(fields: [mdaId], references: [id])
+  budgetCode BudgetCode @relation(fields: [budgetCodeId], references: [id])
+
+  @@unique([budgetYearId, reference])
+  @@index([budgetYearId, mdaId, status])
+  @@map("commitments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Imports, reports and audit
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Import {
+  id           String       @id @default(cuid())
+  profile      String
+  fileName     String
+  fileSize     Int
+  fileHash     String
+  storagePath  String
+  status       ImportStatus @default(UPLOADED)
+  budgetYearId String?
+  mdaId        String?
+  options      Json?
+  detected     Json?
+  summary      Json?
+  errorMessage String?
+  createdById  String
+  createdAt    DateTime     @default(now())
+  validatedAt  DateTime?
+  completedAt  DateTime?
+
+  createdBy  User        @relation(fields: [createdById], references: [id])
+  budgetYear BudgetYear? @relation(fields: [budgetYearId], references: [id])
+  rows       ImportRow[]
+
+  @@index([createdAt])
+  @@map("imports")
+}
+
+model ImportRow {
+  id         String          @id @default(cuid())
+  importId   String
+  sheetName  String
+  rowNumber  Int
+  raw        Json
+  data       Json
+  status     ImportRowStatus
+  issues     Json
+  resolution String?
+  targetType String?
+  targetId   String?
+
+  import Import @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([importId, status])
+  @@index([importId, sheetName, rowNumber])
+  @@map("import_rows")
+}
+
+model SavedReport {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  ownerId     String
+  isShared    Boolean  @default(false)
+  config      Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner User @relation(fields: [ownerId], references: [id])
+
+  @@map("saved_reports")
+}
+
+/// Immutable audit trail (UPDATE/DELETE are blocked by a database trigger).
+model AuditLog {
+  id           BigInt      @id @default(autoincrement())
+  userId       String?
+  userName     String?
+  action       AuditAction
+  entityType   String
+  entityId     String?
+  mdaId        String?
+  budgetYearId String?
+  summary      String?
+  oldValue     Json?
+  newValue     Json?
+  reason       String?
+  ip           String?
+  userAgent    String?
+  createdAt    DateTime    @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@index([mdaId])
+  @@map("audit_logs")
+}
