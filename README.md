@@ -146,7 +146,7 @@ data/                   Reference workbook and the official Form 4 template
 - **Uploads** are checked by extension, size and file signature, stored outside the
   public folder and served only through an authorised route.
 - **Security headers** (CSP, frame denial, no-sniff, referrer and permissions
-  policies, HSTS in production) are set in `next.config.ts`.
+  policies, HSTS in production) are set in `next.config.mjs`.
 - Every significant action (sign-in, change, workflow step, import, export,
   permission change) is recorded in the audit log.
 

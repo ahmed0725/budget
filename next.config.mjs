@@ -1,4 +1,6 @@
-import type { NextConfig } from "next";
+// Plain JavaScript (not next.config.ts): hosts whose system libraries are too old for
+// Next's native compiler (e.g. Hostinger's build servers) cannot transpile a TypeScript
+// config with the WebAssembly fallback.
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -25,7 +27,8 @@ const securityHeaders = [
   ...(isDev ? [] : [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" }]),
 ];
 
-const nextConfig: NextConfig = {
+/** @type {import("next").NextConfig} */
+const nextConfig = {
   poweredByHeader: false,
   serverExternalPackages: ["pdfmake", "exceljs", "pg", "@prisma/adapter-pg", "bcryptjs"],
   experimental: {

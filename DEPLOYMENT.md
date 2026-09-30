@@ -57,11 +57,19 @@ automatically. Later deployments apply new migrations and keep the data.
    | `SEED_DEV_PASSWORD` | your private demo password from step 2 |
    | `DEPLOY_DB_SETUP` | `true` |
    | `SECURE_COOKIES` | `true` |
+   | `SERVER_ACTIONS_ALLOWED_ORIGINS` | your site's domain, e.g. `budget.example.gov` |
    | `STORAGE_DIR` | a folder outside the app, e.g. `/home/<your-user>/gbms-storage` (see note) |
 
 5. Click **Deploy**. The first build takes several minutes: it creates the tables,
    then loads the reference data and the demo data set over the network before
-   building the application. Watch the build log for `✓ Seed completed`.
+   building the application. Watch the build log for `▶ Applying database migrations`
+   and `✓ Seed completed`.
+
+**Why the log says "Building with webpack":** Hostinger's build servers run an older
+Linux (glibc below 2.29) that cannot load Next.js's native compiler, so Next.js uses
+its WebAssembly compiler, and the build script switches to the webpack bundler
+automatically. The site works the same; the build is just slower (a few minutes). Warnings
+such as `Attempted to load @next/swc-linux-x64-gnu` in the log are expected.
 
 **STORAGE_DIR:** attachments and uploaded Excel files are stored here. Use a folder
 that survives redeployments (outside the application folder). If you are unsure of
