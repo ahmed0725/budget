@@ -1,5 +1,5 @@
 import "server-only";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import { PrismaClient } from "@/generated/prisma/client";
 
 function createClient() {
@@ -7,7 +7,8 @@ function createClient() {
   if (!connectionString) {
     throw new Error("DATABASE_URL is not configured");
   }
-  const adapter = new PrismaPg({ connectionString });
+  // mysql://user:password@host:3306/database (MySQL 8+ or MariaDB 10.4+).
+  const adapter = new PrismaMariaDb(connectionString);
   return new PrismaClient({ adapter });
 }
 

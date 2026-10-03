@@ -166,7 +166,7 @@ export async function listCommitments(actor: Actor, f: { year: number; mdaId?: s
     budgetYearId: year.id,
     ...scopeWhere(actor, f.mdaId),
     ...(f.status && ["COMMITTED", "OBLIGATED", "LIQUIDATED", "CANCELLED"].includes(f.status) ? { status: f.status as CommitmentStatus } : {}),
-    ...(f.q ? { OR: [{ reference: { contains: f.q, mode: "insensitive" } }, { description: { contains: f.q, mode: "insensitive" } }, { supplier: { contains: f.q, mode: "insensitive" } }] } : {}),
+    ...(f.q ? { OR: [{ reference: { contains: f.q } }, { description: { contains: f.q } }, { supplier: { contains: f.q } }] } : {}),
   };
   const [total, rows, sums] = await Promise.all([
     prisma.commitment.count({ where }),

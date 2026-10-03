@@ -17,7 +17,7 @@ export function scopeSql(actor: Actor, alias = "s"): Prisma.Sql {
   const scope = mdaScope(actor);
   if (!scope) return Prisma.empty;
   if (scope.in.length === 0) return Prisma.sql`AND FALSE`;
-  return Prisma.sql`AND ${Prisma.raw(`${alias}."mdaId"`)} IN (${Prisma.join(scope.in)})`;
+  return Prisma.sql`AND ${Prisma.raw(`${alias}.mdaId`)} IN (${Prisma.join(scope.in)})`;
 }
 
 /** SQL for the effective submission id per (MDA, year) — used as a CTE. */
@@ -25,21 +25,21 @@ export function effectiveCte(actor: Actor, years: number[], opts: { dataset?: Da
   const approvedOnly = actor.approvedOnly || opts.dataset === "approved";
   return Prisma.sql`
     eff AS (
-      SELECT id, "mdaId", year FROM (
-        SELECT s.id, s."mdaId", y.year,
+      SELECT id, mdaId, year FROM (
+        SELECT s.id, s.mdaId, y.year,
           ROW_NUMBER() OVER (
-            PARTITION BY s."mdaId", s."budgetYearId"
-            ORDER BY (s.status IN ('APPROVED','PUBLISHED') AND s."supersededAt" IS NULL) DESC, s."revisionNumber" DESC, s."updatedAt" DESC
+            PARTITION BY s.mdaId, s.budgetYearId
+            ORDER BY (s.status IN ('APPROVED','PUBLISHED') AND s.supersededAt IS NULL) DESC, s.revisionNumber DESC, s.updatedAt DESC
           ) AS rn
         FROM budget_submissions s
-        JOIN budget_years y ON y.id = s."budgetYearId"
-        JOIN mdas m ON m.id = s."mdaId"
+        JOIN budget_years y ON y.id = s.budgetYearId
+        JOIN mdas m ON m.id = s.mdaId
         WHERE y.year IN (${Prisma.join(years)})
           AND s.status <> 'REJECTED'
-          ${approvedOnly ? Prisma.sql`AND s.status IN ('APPROVED','PUBLISHED') AND s."supersededAt" IS NULL` : Prisma.empty}
-          ${opts.mdaId ? Prisma.sql`AND s."mdaId" = ${opts.mdaId}` : Prisma.empty}
-          ${opts.mdaIds ? (opts.mdaIds.length ? Prisma.sql`AND s."mdaId" IN (${Prisma.join(opts.mdaIds)})` : Prisma.sql`AND FALSE`) : Prisma.empty}
-          ${opts.sectorId ? Prisma.sql`AND m."sectorId" = ${opts.sectorId}` : Prisma.empty}
+          ${approvedOnly ? Prisma.sql`AND s.status IN ('APPROVED','PUBLISHED') AND s.supersededAt IS NULL` : Prisma.empty}
+          ${opts.mdaId ? Prisma.sql`AND s.mdaId = ${opts.mdaId}` : Prisma.empty}
+          ${opts.mdaIds ? (opts.mdaIds.length ? Prisma.sql`AND s.mdaId IN (${Prisma.join(opts.mdaIds)})` : Prisma.sql`AND FALSE`) : Prisma.empty}
+          ${opts.sectorId ? Prisma.sql`AND m.sectorId = ${opts.sectorId}` : Prisma.empty}
           ${scopeSql(actor)}
       ) ranked WHERE rn = 1
     )`;
@@ -59,15 +59,15 @@ export interface YearTotal {
 
 export async function yearTotals(actor: Actor, years: number[], opts: { dataset?: Dataset; mdaId?: string; sectorId?: string } = {}): Promise<YearTotal[]> {
   if (years.length === 0) return [];
-  const rows = await prisma.$queryRaw<{ year: number; kind: string; group: string | null; iscapital: boolean | null; amount: string; mdas: bigint }[]>`
+  const rows = await prisma.$queryRaw<{ year: number; kind: string; grp: string | null; iscapital: boolean | null; amount: string; mdas: bigint }[]>`
     WITH ${effectiveCte(actor, years, opts)}
-    SELECT e.year, l.kind::text AS kind, c."summaryGroup"::text AS group, c."isCapital" AS iscapital,
-           SUM(l.amount)::text AS amount, COUNT(DISTINCT e."mdaId") AS mdas
+    SELECT e.year, l.kind AS kind, c.summaryGroup AS grp, c.isCapital AS iscapital,
+           SUM(l.amount) AS amount, COUNT(DISTINCT e.mdaId) AS mdas
     FROM eff e
-    JOIN budget_lines l ON l."submissionId" = e.id
-    JOIN budget_codes bc ON bc.id = l."budgetCodeId"
-    LEFT JOIN budget_categories c ON c.id = bc."categoryId"
-    GROUP BY e.year, l.kind, c."summaryGroup", c."isCapital"`;
+    JOIN budget_lines l ON l.submissionId = e.id
+    JOIN budget_codes bc ON bc.id = l.budgetCodeId
+    LEFT JOIN budget_categories c ON c.id = bc.categoryId
+    GROUP BY e.year, l.kind, c.summaryGroup, c.isCapital`;
   const mdaCounts = await prisma.$queryRaw<{ year: number; mdas: bigint }[]>`WITH ${effectiveCte(actor, years, opts)} SELECT year, COUNT(*) AS mdas FROM eff GROUP BY year`;
   return years.map((year) => {
     const rs = rows.filter((r) => r.year === year);
@@ -77,7 +77,7 @@ export async function yearTotals(actor: Actor, years: number[], opts: { dataset?
       year,
       expenditure: sumOf(exp),
       revenue: sumOf(rs.filter((r) => r.kind === "REVENUE")),
-      personnel: sumOf(exp.filter((r) => r.group === "PERSONNEL")),
+      personnel: sumOf(exp.filter((r) => r.grp === "PERSONNEL")),
       capital: sumOf(exp.filter((r) => r.iscapital)),
       recurrent: sumOf(exp.filter((r) => !r.iscapital)),
       mdas: Number(mdaCounts.find((m) => m.year === year)?.mdas ?? 0),
@@ -104,20 +104,20 @@ export interface MdaBudget {
 export async function budgetByMda(actor: Actor, year: number, opts: { dataset?: Dataset; sectorId?: string; mdaId?: string } = {}): Promise<MdaBudget[]> {
   const rows = await prisma.$queryRaw<{ mdaid: string; code: string; name: string; nameen: string | null; sector: string; sectoren: string | null; sectorid: string; status: string; sid: string; exp: string | null; rev: string | null; pers: string | null; cap: string | null }[]>`
     WITH ${effectiveCte(actor, [year], opts)}
-    SELECT m.id AS mdaid, m.code, m.name, m."nameEn" AS nameen, sec.name AS sector, sec."nameEn" AS sectoren, sec.id AS sectorid, s.status::text AS status, s.id AS sid,
-      SUM(CASE WHEN l.kind = 'EXPENDITURE' THEN l.amount ELSE 0 END)::text AS exp,
-      SUM(CASE WHEN l.kind = 'REVENUE' THEN l.amount ELSE 0 END)::text AS rev,
-      SUM(CASE WHEN l.kind = 'EXPENDITURE' AND c."summaryGroup" = 'PERSONNEL' THEN l.amount ELSE 0 END)::text AS pers,
-      SUM(CASE WHEN l.kind = 'EXPENDITURE' AND c."isCapital" THEN l.amount ELSE 0 END)::text AS cap
+    SELECT m.id AS mdaid, m.code, m.name, m.nameEn AS nameen, sec.name AS sector, sec.nameEn AS sectoren, sec.id AS sectorid, s.status AS status, s.id AS sid,
+      SUM(CASE WHEN l.kind = 'EXPENDITURE' THEN l.amount ELSE 0 END) AS exp,
+      SUM(CASE WHEN l.kind = 'REVENUE' THEN l.amount ELSE 0 END) AS rev,
+      SUM(CASE WHEN l.kind = 'EXPENDITURE' AND c.summaryGroup = 'PERSONNEL' THEN l.amount ELSE 0 END) AS pers,
+      SUM(CASE WHEN l.kind = 'EXPENDITURE' AND c.isCapital THEN l.amount ELSE 0 END) AS cap
     FROM eff e
     JOIN budget_submissions s ON s.id = e.id
-    JOIN mdas m ON m.id = e."mdaId"
-    JOIN sectors sec ON sec.id = m."sectorId"
-    LEFT JOIN budget_lines l ON l."submissionId" = e.id
-    LEFT JOIN budget_codes bc ON bc.id = l."budgetCodeId"
-    LEFT JOIN budget_categories c ON c.id = bc."categoryId"
-    GROUP BY m.id, m.code, m.name, m."nameEn", sec.name, sec."nameEn", sec.id, s.status, s.id
-    ORDER BY SUM(CASE WHEN l.kind = 'EXPENDITURE' THEN l.amount ELSE 0 END) DESC NULLS LAST`;
+    JOIN mdas m ON m.id = e.mdaId
+    JOIN sectors sec ON sec.id = m.sectorId
+    LEFT JOIN budget_lines l ON l.submissionId = e.id
+    LEFT JOIN budget_codes bc ON bc.id = l.budgetCodeId
+    LEFT JOIN budget_categories c ON c.id = bc.categoryId
+    GROUP BY m.id, m.code, m.name, m.nameEn, sec.name, sec.nameEn, sec.id, s.status, s.id
+    ORDER BY SUM(CASE WHEN l.kind = 'EXPENDITURE' THEN l.amount ELSE 0 END) DESC`;
   return rows.map((r) => ({
     mdaId: r.mdaid,
     code: r.code,
@@ -147,14 +147,14 @@ export interface CategoryAmount {
 export async function budgetByCategory(actor: Actor, year: number, opts: { dataset?: Dataset; mdaId?: string; mdaIds?: string[]; sectorId?: string; kind?: "REVENUE" | "EXPENDITURE" } = {}): Promise<CategoryAmount[]> {
   const rows = await prisma.$queryRaw<{ id: string | null; code: string | null; name: string | null; nameso: string | null; kind: string; sortorder: number | null; amount: string }[]>`
     WITH ${effectiveCte(actor, [year], opts)}
-    SELECT c.id, c.code, c.name, c."nameSo" AS nameso, l.kind::text AS kind, c."sortOrder" AS sortorder, SUM(l.amount)::text AS amount
+    SELECT c.id, c.code, c.name, c.nameSo AS nameso, l.kind AS kind, c.sortOrder AS sortorder, SUM(l.amount) AS amount
     FROM eff e
-    JOIN budget_lines l ON l."submissionId" = e.id
-    JOIN budget_codes bc ON bc.id = l."budgetCodeId"
-    LEFT JOIN budget_categories c ON c.id = bc."categoryId"
-    ${opts.kind ? Prisma.sql`WHERE l.kind = ${opts.kind}::"BudgetKind"` : Prisma.empty}
-    GROUP BY c.id, c.code, c.name, c."nameSo", l.kind, c."sortOrder"
-    ORDER BY c."sortOrder" NULLS LAST`;
+    JOIN budget_lines l ON l.submissionId = e.id
+    JOIN budget_codes bc ON bc.id = l.budgetCodeId
+    LEFT JOIN budget_categories c ON c.id = bc.categoryId
+    ${opts.kind ? Prisma.sql`WHERE l.kind = ${opts.kind}` : Prisma.empty}
+    GROUP BY c.id, c.code, c.name, c.nameSo, l.kind, c.sortOrder
+    ORDER BY c.sortOrder IS NULL, c.sortOrder`;
   return rows.map((r) => ({ categoryId: r.id, code: r.code ?? "UNCATEGORISED", name: r.name ?? "Uncategorised", nameSo: r.nameso ?? "Aan la kala saarin", kind: r.kind, amount: n(r.amount) }));
 }
 
@@ -162,18 +162,18 @@ export async function budgetByCategory(actor: Actor, year: number, opts: { datas
 export async function budgetByCodeLevel(actor: Actor, year: number, kind: "REVENUE" | "EXPENDITURE", level: number, opts: { dataset?: Dataset; mdaId?: string; sectorId?: string; parentPath?: string } = {}) {
   const rows = await prisma.$queryRaw<{ code: string; name: string; nameen: string | null; id: string; amount: string }[]>`
     WITH ${effectiveCte(actor, [year], opts)},
-    lines AS (
+    ln AS (
       SELECT l.amount, bc.path FROM eff e
-      JOIN budget_lines l ON l."submissionId" = e.id AND l.kind = ${kind}::"BudgetKind"
-      JOIN budget_codes bc ON bc.id = l."budgetCodeId"
+      JOIN budget_lines l ON l.submissionId = e.id AND l.kind = ${kind}
+      JOIN budget_codes bc ON bc.id = l.budgetCodeId
     )
-    SELECT a.code, a.name, a."nameEn" AS nameen, a.id, SUM(lines.amount)::text AS amount
+    SELECT a.code, a.name, a.nameEn AS nameen, a.id, SUM(ln.amount) AS amount
     FROM budget_codes a
-    JOIN lines ON (lines.path = a.path OR lines.path LIKE a.path || '/%')
-    WHERE a.kind = ${kind}::"BudgetKind" AND a.level = ${level}
+    JOIN ln ON (ln.path = a.path OR ln.path LIKE CONCAT(a.path, '/%'))
+    WHERE a.kind = ${kind} AND a.level = ${level}
       ${opts.parentPath ? Prisma.sql`AND a.path LIKE ${opts.parentPath + "/%"}` : Prisma.empty}
-    GROUP BY a.code, a.name, a."nameEn", a.id
-    ORDER BY SUM(lines.amount) DESC`;
+    GROUP BY a.code, a.name, a.nameEn, a.id
+    ORDER BY SUM(ln.amount) DESC`;
   return rows.map((r) => ({ id: r.id, code: r.code, name: r.name, nameEn: r.nameen, amount: n(r.amount) }));
 }
 
@@ -183,8 +183,8 @@ export async function budgetByCodeLevel(actor: Actor, year: number, kind: "REVEN
 
 function execScope(actor: Actor, opts: { mdaId?: string; sectorId?: string }): Prisma.Sql {
   return Prisma.sql`
-    ${opts.mdaId ? Prisma.sql`AND x."mdaId" = ${opts.mdaId}` : Prisma.empty}
-    ${opts.sectorId ? Prisma.sql`AND x."mdaId" IN (SELECT id FROM mdas WHERE "sectorId" = ${opts.sectorId})` : Prisma.empty}
+    ${opts.mdaId ? Prisma.sql`AND x.mdaId = ${opts.mdaId}` : Prisma.empty}
+    ${opts.sectorId ? Prisma.sql`AND x.mdaId IN (SELECT id FROM mdas WHERE sectorId = ${opts.sectorId})` : Prisma.empty}
     ${scopeSql(actor, "x")}`;
 }
 
@@ -198,10 +198,10 @@ export interface MonthlyExecution {
 
 export async function expenditureMonthly(actor: Actor, year: number, opts: { mdaId?: string; sectorId?: string; codePath?: string } = {}): Promise<MonthlyExecution[]> {
   const rows = await prisma.$queryRaw<{ month: number; planned: string; actual: string }[]>`
-    SELECT x.month, SUM(x."plannedAmount")::text AS planned, SUM(x."actualAmount")::text AS actual
+    SELECT x.month, SUM(x.plannedAmount) AS planned, SUM(x.actualAmount) AS actual
     FROM expenditure_execution x
-    JOIN budget_years y ON y.id = x."budgetYearId"
-    ${opts.codePath ? Prisma.sql`JOIN budget_codes bc ON bc.id = x."budgetCodeId"` : Prisma.empty}
+    JOIN budget_years y ON y.id = x.budgetYearId
+    ${opts.codePath ? Prisma.sql`JOIN budget_codes bc ON bc.id = x.budgetCodeId` : Prisma.empty}
     WHERE y.year = ${year} ${execScope(actor, opts)}
       ${opts.codePath ? Prisma.sql`AND (bc.path = ${opts.codePath} OR bc.path LIKE ${opts.codePath + "/%"})` : Prisma.empty}
     GROUP BY x.month ORDER BY x.month`;
@@ -219,8 +219,8 @@ export async function expenditureMonthly(actor: Actor, year: number, opts: { mda
 
 export async function revenueMonthly(actor: Actor, year: number, opts: { mdaId?: string; sectorId?: string } = {}) {
   const rows = await prisma.$queryRaw<{ month: number; target: string; actual: string }[]>`
-    SELECT x.month, SUM(x."targetAmount")::text AS target, SUM(x."actualAmount")::text AS actual
-    FROM revenue_execution x JOIN budget_years y ON y.id = x."budgetYearId"
+    SELECT x.month, SUM(x.targetAmount) AS target, SUM(x.actualAmount) AS actual
+    FROM revenue_execution x JOIN budget_years y ON y.id = x.budgetYearId
     WHERE y.year = ${year} ${execScope(actor, opts)}
     GROUP BY x.month ORDER BY x.month`;
   return Array.from({ length: 12 }, (_, i) => {
@@ -245,22 +245,22 @@ export interface ExecutionSummary {
 
 export async function executionSummary(actor: Actor, year: number, opts: { mdaId?: string; sectorId?: string } = {}): Promise<ExecutionSummary> {
   const [alloc] = await prisma.$queryRaw<{ orig: string | null; rev: string | null; rtarget: string | null }[]>`
-    SELECT SUM(CASE WHEN x.kind = 'EXPENDITURE' THEN x."originalAmount" END)::text AS orig,
-           SUM(CASE WHEN x.kind = 'EXPENDITURE' THEN x."revisedAmount" END)::text AS rev,
-           SUM(CASE WHEN x.kind = 'REVENUE' THEN x."revisedAmount" END)::text AS rtarget
-    FROM budget_execution x JOIN budget_years y ON y.id = x."budgetYearId"
+    SELECT SUM(CASE WHEN x.kind = 'EXPENDITURE' THEN x.originalAmount END) AS orig,
+           SUM(CASE WHEN x.kind = 'EXPENDITURE' THEN x.revisedAmount END) AS rev,
+           SUM(CASE WHEN x.kind = 'REVENUE' THEN x.revisedAmount END) AS rtarget
+    FROM budget_execution x JOIN budget_years y ON y.id = x.budgetYearId
     WHERE y.year = ${year} ${execScope(actor, opts)}`;
-  const [exp] = await prisma.$queryRaw<{ actual: string | null; lastmonth: number | null }[]>`
-    SELECT SUM(x."actualAmount")::text AS actual, MAX(CASE WHEN x."actualAmount" <> 0 THEN x.month END) AS lastmonth
-    FROM expenditure_execution x JOIN budget_years y ON y.id = x."budgetYearId"
+  const [exp] = await prisma.$queryRaw<{ actual: string | null; lastmonth: bigint | number | null }[]>`
+    SELECT SUM(x.actualAmount) AS actual, MAX(CASE WHEN x.actualAmount <> 0 THEN x.month END) AS lastmonth
+    FROM expenditure_execution x JOIN budget_years y ON y.id = x.budgetYearId
     WHERE y.year = ${year} ${execScope(actor, opts)}`;
   const [rev] = await prisma.$queryRaw<{ actual: string | null }[]>`
-    SELECT SUM(x."actualAmount")::text AS actual FROM revenue_execution x JOIN budget_years y ON y.id = x."budgetYearId"
+    SELECT SUM(x.actualAmount) AS actual FROM revenue_execution x JOIN budget_years y ON y.id = x.budgetYearId
     WHERE y.year = ${year} ${execScope(actor, opts)}`;
   const [com] = await prisma.$queryRaw<{ committed: string | null; obligated: string | null }[]>`
-    SELECT SUM(CASE WHEN x.status IN ('COMMITTED','OBLIGATED') THEN x.amount END)::text AS committed,
-           SUM(CASE WHEN x.status = 'OBLIGATED' THEN x.amount END)::text AS obligated
-    FROM commitments x JOIN budget_years y ON y.id = x."budgetYearId"
+    SELECT SUM(CASE WHEN x.status IN ('COMMITTED','OBLIGATED') THEN x.amount END) AS committed,
+           SUM(CASE WHEN x.status = 'OBLIGATED' THEN x.amount END) AS obligated
+    FROM commitments x JOIN budget_years y ON y.id = x.budgetYearId
     WHERE y.year = ${year} ${execScope(actor, opts)}`;
   const revised = n(alloc?.rev ?? 0);
   const actual = n(exp?.actual ?? 0);
@@ -278,7 +278,7 @@ export async function executionSummary(actor: Actor, year: number, opts: { mdaId
     revenueTarget,
     revenueActual,
     collectionRate: calculateRevenueCollectionRate(revenueActual, revenueTarget),
-    lastActualMonth: exp?.lastmonth ?? 0,
+    lastActualMonth: Number(exp?.lastmonth ?? 0),
   };
 }
 
@@ -299,19 +299,19 @@ export interface MdaExecution {
 export async function executionByMda(actor: Actor, year: number, opts: { sectorId?: string; mdaId?: string } = {}): Promise<MdaExecution[]> {
   const rows = await prisma.$queryRaw<{ mdaid: string; code: string; name: string; nameen: string | null; budget: string | null; actual: string | null; planned: string | null; committed: string | null }[]>`
     WITH a AS (
-      SELECT x."mdaId", SUM(x."revisedAmount") AS budget FROM budget_execution x JOIN budget_years y ON y.id = x."budgetYearId"
-      WHERE y.year = ${year} AND x.kind = 'EXPENDITURE' ${execScope(actor, opts)} GROUP BY x."mdaId"
+      SELECT x.mdaId, SUM(x.revisedAmount) AS budget FROM budget_execution x JOIN budget_years y ON y.id = x.budgetYearId
+      WHERE y.year = ${year} AND x.kind = 'EXPENDITURE' ${execScope(actor, opts)} GROUP BY x.mdaId
     ), e AS (
-      SELECT x."mdaId", SUM(x."actualAmount") AS actual,
-        SUM(CASE WHEN x.month <= (SELECT COALESCE(MAX(month), 0) FROM expenditure_execution z JOIN budget_years yy ON yy.id = z."budgetYearId" WHERE yy.year = ${year} AND z."actualAmount" <> 0) THEN x."plannedAmount" ELSE 0 END) AS planned
-      FROM expenditure_execution x JOIN budget_years y ON y.id = x."budgetYearId"
-      WHERE y.year = ${year} ${execScope(actor, opts)} GROUP BY x."mdaId"
+      SELECT x.mdaId, SUM(x.actualAmount) AS actual,
+        SUM(CASE WHEN x.month <= (SELECT COALESCE(MAX(month), 0) FROM expenditure_execution z JOIN budget_years yy ON yy.id = z.budgetYearId WHERE yy.year = ${year} AND z.actualAmount <> 0) THEN x.plannedAmount ELSE 0 END) AS planned
+      FROM expenditure_execution x JOIN budget_years y ON y.id = x.budgetYearId
+      WHERE y.year = ${year} ${execScope(actor, opts)} GROUP BY x.mdaId
     ), c AS (
-      SELECT x."mdaId", SUM(x.amount) AS committed FROM commitments x JOIN budget_years y ON y.id = x."budgetYearId"
-      WHERE y.year = ${year} AND x.status IN ('COMMITTED','OBLIGATED') ${execScope(actor, opts)} GROUP BY x."mdaId"
+      SELECT x.mdaId, SUM(x.amount) AS committed FROM commitments x JOIN budget_years y ON y.id = x.budgetYearId
+      WHERE y.year = ${year} AND x.status IN ('COMMITTED','OBLIGATED') ${execScope(actor, opts)} GROUP BY x.mdaId
     )
-    SELECT m.id AS mdaid, m.code, m.name, m."nameEn" AS nameen, a.budget::text, e.actual::text, e.planned::text, c.committed::text
-    FROM a JOIN mdas m ON m.id = a."mdaId" LEFT JOIN e ON e."mdaId" = a."mdaId" LEFT JOIN c ON c."mdaId" = a."mdaId"
+    SELECT m.id AS mdaid, m.code, m.name, m.nameEn AS nameen, a.budget, e.actual, e.planned, c.committed
+    FROM a JOIN mdas m ON m.id = a.mdaId LEFT JOIN e ON e.mdaId = a.mdaId LEFT JOIN c ON c.mdaId = a.mdaId
     ORDER BY a.budget DESC`;
   return rows.map((r) => {
     const budget = n(r.budget ?? 0);
@@ -475,7 +475,7 @@ export async function topProjects(actor: Actor, year: number, limit = 8) {
 
 /** The effective submission of every MDA for a year (respects scope and dataset). */
 export async function effectiveSubmissions(actor: Actor, year: number, opts: { dataset?: Dataset; mdaId?: string; sectorId?: string } = {}) {
-  const rows = await prisma.$queryRaw<{ id: string; mdaid: string }[]>`WITH ${effectiveCte(actor, [year], opts)} SELECT id, "mdaId" AS mdaid FROM eff`;
+  const rows = await prisma.$queryRaw<{ id: string; mdaid: string }[]>`WITH ${effectiveCte(actor, [year], opts)} SELECT id, mdaId AS mdaid FROM eff`;
   return rows.map((r) => ({ id: r.id, mdaId: r.mdaid }));
 }
 
@@ -483,9 +483,9 @@ export async function effectiveSubmissions(actor: Actor, year: number, opts: { d
 export async function budgetByMdaGroup(actor: Actor, year: number, opts: { dataset?: Dataset; mdaId?: string; sectorId?: string } = {}) {
   const rows = await prisma.$queryRaw<{ mdaid: string; grp: string | null; amount: string }[]>`
     WITH ${effectiveCte(actor, [year], opts)}
-    SELECT e."mdaId" AS mdaid, c."summaryGroup"::text AS grp, SUM(l.amount)::text AS amount
-    FROM eff e JOIN budget_lines l ON l."submissionId" = e.id AND l.kind = 'EXPENDITURE'
-    JOIN budget_codes bc ON bc.id = l."budgetCodeId" LEFT JOIN budget_categories c ON c.id = bc."categoryId"
-    GROUP BY e."mdaId", c."summaryGroup"`;
+    SELECT e.mdaId AS mdaid, c.summaryGroup AS grp, SUM(l.amount) AS amount
+    FROM eff e JOIN budget_lines l ON l.submissionId = e.id AND l.kind = 'EXPENDITURE'
+    JOIN budget_codes bc ON bc.id = l.budgetCodeId LEFT JOIN budget_categories c ON c.id = bc.categoryId
+    GROUP BY e.mdaId, c.summaryGroup`;
   return rows.map((r) => ({ mdaId: r.mdaid, group: r.grp ?? "OTHER", amount: n(r.amount) }));
 }

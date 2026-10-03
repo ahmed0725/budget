@@ -31,7 +31,7 @@ export async function listMdas(filters: { q?: string; sectorId?: string; active?
     deletedAt: null,
     ...(filters.sectorId ? { sectorId: filters.sectorId } : {}),
     ...(filters.active === "active" ? { isActive: true } : filters.active === "inactive" ? { isActive: false } : {}),
-    ...(filters.q ? { OR: [{ code: { contains: filters.q } }, { name: { contains: filters.q, mode: "insensitive" } }, { nameEn: { contains: filters.q, mode: "insensitive" } }] } : {}),
+    ...(filters.q ? { OR: [{ code: { contains: filters.q } }, { name: { contains: filters.q } }, { nameEn: { contains: filters.q } }] } : {}),
   };
   const [key, dir] = (filters.sort ?? "code.asc").split(".");
   const orderBy: Prisma.MdaOrderByWithRelationInput = key === "name" ? { name: dir === "desc" ? "desc" : "asc" } : key === "sector" ? { sector: { code: dir === "desc" ? "desc" : "asc" } } : { code: dir === "desc" ? "desc" : "asc" };
@@ -371,7 +371,7 @@ const USER_SORTS: Record<string, (dir: "asc" | "desc") => Prisma.UserOrderByWith
 export async function listUsers(filters: { q?: string; roleId?: string; mdaId?: string; active?: "active" | "inactive" | "locked"; page: number; pageSize: number; sort?: string | null }) {
   const where: Prisma.UserWhereInput = {
     deletedAt: null,
-    ...(filters.q ? { OR: [{ fullName: { contains: filters.q, mode: "insensitive" } }, { username: { contains: filters.q, mode: "insensitive" } }, { email: { contains: filters.q, mode: "insensitive" } }] } : {}),
+    ...(filters.q ? { OR: [{ fullName: { contains: filters.q } }, { username: { contains: filters.q } }, { email: { contains: filters.q } }] } : {}),
     ...(filters.roleId ? { roles: { some: { roleId: filters.roleId } } } : {}),
     ...(filters.mdaId ? { mdaAssignments: { some: { mdaId: filters.mdaId } } } : {}),
     ...(filters.active === "active" ? { isActive: true } : filters.active === "inactive" ? { isActive: false } : filters.active === "locked" ? { lockedUntil: { gt: new Date() } } : {}),

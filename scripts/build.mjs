@@ -18,18 +18,29 @@ const run = (cmd) => execSync(cmd, { stdio: "inherit", env: process.env });
 
 function checkEnvironment() {
   if (process.env.SKIP_ENV_CHECK === "true") return;
-  const missing = ["DATABASE_URL", "AUTH_SECRET"].filter((k) => !process.env[k]?.trim());
-  if (process.env.DEPLOY_DB_SETUP === "true" && process.env.SEED_SKIP_DEV !== "true" && !process.env.SEED_DEV_PASSWORD?.trim()) missing.push("SEED_DEV_PASSWORD");
-  if (missing.length === 0) return;
+  const env = (k) => process.env[k]?.trim() ?? "";
+  const problems = [];
+  if (!env("DATABASE_URL")) problems.push("DATABASE_URL is missing");
+  else if (!/^mysql:\/\//.test(env("DATABASE_URL"))) problems.push("DATABASE_URL must start with mysql://");
+  if (!env("AUTH_SECRET")) problems.push("AUTH_SECRET is missing");
+  else if (env("AUTH_SECRET").length < 32) problems.push("AUTH_SECRET is too short (use at least 32 random characters)");
+  if (process.env.DEPLOY_DB_SETUP === "true" && process.env.SEED_SKIP_DEV !== "true") {
+    if (!env("SEED_DEV_PASSWORD")) problems.push("SEED_DEV_PASSWORD is missing");
+    else if (env("SEED_DEV_PASSWORD").length < 10) problems.push("SEED_DEV_PASSWORD is too short (use at least 10 characters)");
+  }
+  if (problems.length === 0) return;
   console.error(`
-✖ Missing environment variable(s): ${missing.join(", ")}
+✖ Environment settings need attention:
+${problems.map((p) => `    - ${p}`).join("\n")}
 
-  The application needs these settings to build and run. On Hostinger, add them in
-  hPanel → your Node.js app → Settings / Environment variables, then redeploy:
+  On Hostinger, set them in hPanel → your Node.js app → Settings / Environment variables,
+  then redeploy:
 
-    DATABASE_URL        PostgreSQL connection string (e.g. from Neon), with ?sslmode=require
-    AUTH_SECRET         a long random value
-    SEED_DEV_PASSWORD   private password for the demo accounts
+    DATABASE_URL        mysql://USER:PASSWORD@localhost:3306/DATABASE
+                        (hPanel → Databases → MySQL; URL-encode special characters
+                        in the password, e.g. @ → %40, # → %23)
+    AUTH_SECRET         a long random value, at least 32 characters — not a password
+    SEED_DEV_PASSWORD   private password for the demo accounts, at least 10 characters
     DEPLOY_DB_SETUP     true   (creates the tables and demo data on the first deploy)
     SECURE_COOKIES      true   (the site is served over HTTPS)
 

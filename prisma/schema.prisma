@@ -1,13 +1,14 @@
-// Government Budget Management System — PostgreSQL schema.
+// Government Budget Management System — MySQL / MariaDB schema.
 //
 // Conventions
 // - Table names are snake_case plurals (see @@map). Column names are camelCase.
-// - Money is stored as numeric(18,2) in the configured budget currency (USD).
+// - Money is stored as DECIMAL(18,2) in the configured budget currency (USD).
+// - Strings default to VARCHAR(191); free text is TEXT and longer names VARCHAR(255).
 // - Reference data (MDAs, codes, categories, lookups, years) is kept separate from
 //   transaction data (submissions, lines, execution, commitments).
-// - Approved budgets are immutable: see the triggers in the migrations folder.
-// - Views `revenue_codes`, `expenditure_codes`, `revenue_lines` and `expenditure_lines`
-//   are created in SQL on top of `budget_codes` and `budget_lines`.
+// - Approved budgets are immutable: database triggers, unique keys for budget lines and
+//   CHECK constraints are in the migrations; triggers in prisma/sql/integrity.mjs (installed by
+//   `npm run db:deploy`).
 
 generator client {
   provider = "prisma-client"
@@ -15,7 +16,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -271,10 +272,10 @@ enum MdaAssignmentType {
 
 model User {
   id                 String    @id @default(cuid())
-  email              String    @unique
+  email              String    @unique @db.VarChar(255)
   username           String    @unique
-  fullName           String
-  jobTitle           String?
+  fullName           String @db.VarChar(255)
+  jobTitle           String? @db.VarChar(255)
   phone              String?
   passwordHash       String
   locale             String    @default("en")
@@ -313,7 +314,7 @@ model Role {
   key         String   @unique
   name        String
   nameSo      String?
-  description String?
+  description String? @db.Text
   isSystem    Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -329,7 +330,7 @@ model Permission {
   key         String  @unique
   name        String
   group       String
-  description String?
+  description String? @db.Text
 
   roles RolePermission[]
 
@@ -377,7 +378,7 @@ model Session {
   userId     String
   expiresAt  DateTime
   ip         String?
-  userAgent  String?
+  userAgent  String? @db.Text
   createdAt  DateTime @default(now())
   lastSeenAt DateTime @default(now())
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -402,8 +403,8 @@ model RateLimit {
 model Sector {
   id        String   @id @default(cuid())
   code      String   @unique
-  name      String
-  nameEn    String?
+  name      String @db.VarChar(255)
+  nameEn    String? @db.VarChar(255)
   sortOrder Int      @default(0)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -418,8 +419,8 @@ model LookupValue {
   id        String         @id @default(cuid())
   category  LookupCategory
   code      String
-  name      String
-  nameEn    String?
+  name      String @db.VarChar(255)
+  nameEn    String? @db.VarChar(255)
   sortOrder Int            @default(0)
   isActive  Boolean        @default(true)
   createdAt DateTime       @default(now())
@@ -438,21 +439,21 @@ model LookupValue {
 model Mda {
   id                String    @id @default(cuid())
   code              String    @unique
-  name              String
-  nameEn            String?
+  name              String @db.VarChar(255)
+  nameEn            String? @db.VarChar(255)
   shortName         String?
   sectorId          String
   parentId          String?
   agencyTypeId      String?
   regionId          String?
   categoryId        String?
-  accountingOfficer String?
-  financeDirector   String?
-  budgetOfficer     String?
-  contactPerson     String?
+  accountingOfficer String? @db.VarChar(255)
+  financeDirector   String? @db.VarChar(255)
+  budgetOfficer     String? @db.VarChar(255)
+  contactPerson     String? @db.VarChar(255)
   phone             String?
-  email             String?
-  address           String?
+  email             String? @db.VarChar(255)
+  address           String? @db.Text
   isActive          Boolean   @default(true)
   isDevSeed         Boolean   @default(false)
   createdAt         DateTime  @default(now())
@@ -496,7 +497,7 @@ model BudgetYear {
   executionEnd       DateTime?        @db.Date
   closingDate        DateTime?        @db.Date
   status             BudgetYearStatus @default(DRAFT)
-  notes              String?
+  notes              String? @db.Text
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
@@ -514,8 +515,8 @@ model BudgetYear {
 model BudgetCategory {
   id                  String        @id @default(cuid())
   code                String        @unique
-  name                String
-  nameSo              String
+  name                String @db.VarChar(255)
+  nameSo              String @db.VarChar(255)
   kind                BudgetKind
   summaryGroup        SummaryGroup?
   isCapital           Boolean       @default(false)
@@ -536,9 +537,9 @@ model BudgetCategory {
 model BudgetCode {
   id                String         @id @default(cuid())
   code              String
-  name              String
-  nameEn            String?
-  description       String?
+  name              String @db.VarChar(255)
+  nameEn            String? @db.VarChar(255)
+  description       String? @db.Text
   kind              BudgetKind
   parentId          String?
   level             Int
@@ -575,9 +576,9 @@ model CodeMapping {
   id           String     @id @default(cuid())
   scheme       String
   sourceCode   String
-  sourceName   String?
+  sourceName   String? @db.VarChar(255)
   targetCodeId String
-  notes        String?
+  notes        String? @db.Text
   createdAt    DateTime   @default(now())
   targetCode   BudgetCode @relation(fields: [targetCodeId], references: [id])
 
@@ -588,7 +589,7 @@ model CodeMapping {
 model SystemSetting {
   key         String   @id
   value       Json
-  description String?
+  description String? @db.Text
   updatedAt   DateTime @updatedAt
   updatedById String?
 
@@ -598,9 +599,9 @@ model SystemSetting {
 model ValidationRule {
   id          String             @id @default(cuid())
   code        String             @unique
-  name        String
-  nameSo      String
-  description String
+  name        String @db.VarChar(255)
+  nameSo      String @db.VarChar(255)
+  description String @db.Text
   severity    ValidationSeverity
   isActive    Boolean            @default(true)
   tolerance   Decimal            @default(1) @db.Decimal(18, 2)
@@ -625,17 +626,17 @@ model BudgetSubmission {
   revisionType       RevisionType?
   revisionNumber     Int              @default(0)
   parentSubmissionId String?
-  revisionReason     String?
+  revisionReason     String? @db.Text
   status             SubmissionStatus @default(DRAFT)
   source             DataSource       @default(MANUAL)
 
   // Form A — agency summary (captured per submission; defaults from the MDA record)
   allocationNumber  String?
-  agencyCategory    String?
-  accountingOfficer String?
-  contactPerson     String?
+  agencyCategory    String? @db.VarChar(255)
+  accountingOfficer String? @db.VarChar(255)
+  contactPerson     String? @db.VarChar(255)
   telephone         String?
-  email             String?
+  email             String? @db.VarChar(255)
 
   assignedReviewerId String?
   submittedAt        DateTime?
@@ -698,9 +699,9 @@ model BudgetVersion {
   id            String           @id @default(cuid())
   submissionId  String
   versionNumber Int
-  label         String
+  label         String @db.VarChar(255)
   status        SubmissionStatus
-  reason        String?
+  reason        String? @db.Text
   snapshot      Json
   totals        Json
   changes       Json?
@@ -723,14 +724,14 @@ model BudgetLine {
   budgetCodeId        String
   kind                BudgetKind
   capitalProjectId    String?
-  description         String?
+  description         String? @db.Text
   amount              Decimal    @default(0) @db.Decimal(18, 2)
   priorYearActual     Decimal?   @db.Decimal(18, 2)
   currentYearEstimate Decimal?   @db.Decimal(18, 2)
-  justification       String?
+  justification       String? @db.Text
   sortOrder           Int        @default(0)
   source              DataSource @default(MANUAL)
-  sourceRef           String?
+  sourceRef           String? @db.Text
   createdById         String?
   updatedById         String?
   createdAt           DateTime   @default(now())
@@ -738,7 +739,7 @@ model BudgetLine {
 
   submission     BudgetSubmission @relation(fields: [submissionId], references: [id])
   budgetCode     BudgetCode       @relation(fields: [budgetCodeId], references: [id])
-  capitalProject CapitalProject?  @relation(fields: [capitalProjectId], references: [id])
+  capitalProject CapitalProject?  @relation(fields: [capitalProjectId], references: [id], onDelete: Restrict, onUpdate: Restrict) // base column of lineProjectKey: MySQL 8 forbids cascading actions there
 
   @@index([submissionId, kind])
   @@index([budgetCodeId])
@@ -750,15 +751,15 @@ model BudgetLine {
 model PersonnelBudget {
   id                    String   @id @default(cuid())
   submissionId          String
-  positionTitle         String
+  positionTitle         String @db.VarChar(255)
   grade                 String?
-  department            String?
+  department            String? @db.VarChar(255)
   budgetCodeId          String?
   approvedEstablishment Int      @default(0)
   filledPositions       Int      @default(0)
   monthlyCost           Decimal  @default(0) @db.Decimal(18, 2)
   annualCost            Decimal  @default(0) @db.Decimal(18, 2)
-  remarks               String?
+  remarks               String? @db.Text
   sortOrder             Int      @default(0)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -775,10 +776,10 @@ model CapitalProject {
   id                     String        @id @default(cuid())
   mdaId                  String
   projectCode            String?
-  name                   String
-  location               String?
-  description            String?
-  justification          String?
+  name                   String @db.VarChar(255)
+  location               String? @db.VarChar(255)
+  description            String? @db.Text
+  justification          String? @db.Text
   totalCost              Decimal       @default(0) @db.Decimal(18, 2)
   spentToDate            Decimal       @default(0) @db.Decimal(18, 2)
   fundingSourceId        String?
@@ -808,14 +809,14 @@ model CapitalProject {
 model ProcurementPlan {
   id                    String   @id @default(cuid())
   submissionId          String
-  itemDescription       String
+  itemDescription       String @db.Text
   estimatedCost         Decimal  @default(0) @db.Decimal(18, 2)
   procurementMethodId   String?
   quarter               Quarter
-  responsibleDepartment String?
+  responsibleDepartment String? @db.VarChar(255)
   budgetCategoryId      String?
   capitalProjectId      String?
-  remarks               String?
+  remarks               String? @db.Text
   sortOrder             Int      @default(0)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -835,7 +836,7 @@ model CashFlowForecast {
   submissionId String
   quarter      Quarter
   amount       Decimal  @default(0) @db.Decimal(18, 2)
-  remarks      String?
+  remarks      String? @db.Text
   updatedAt    DateTime @updatedAt
 
   submission BudgetSubmission @relation(fields: [submissionId], references: [id])
@@ -850,7 +851,7 @@ model SubmissionNote {
   submissionId String
   form         FormCode
   key          String
-  text         String
+  text         String @db.Text
   updatedById  String?
   updatedAt    DateTime @updatedAt
 
@@ -864,22 +865,22 @@ model SubmissionNote {
 model Certification {
   id                  String    @id @default(cuid())
   submissionId        String    @unique
-  preparedByName      String?
-  preparedByTitle     String?
+  preparedByName      String? @db.VarChar(255)
+  preparedByTitle     String? @db.VarChar(255)
   preparedById        String?
   preparedAt          DateTime?
-  preparedSignature   String?
-  reviewedByName      String?
-  reviewedByTitle     String?
+  preparedSignature   String? @db.Text
+  reviewedByName      String? @db.VarChar(255)
+  reviewedByTitle     String? @db.VarChar(255)
   reviewedById        String?
   reviewedAt          DateTime?
-  reviewedSignature   String?
-  approvedByName      String?
-  approvedByTitle     String?
+  reviewedSignature   String? @db.Text
+  approvedByName      String? @db.VarChar(255)
+  approvedByTitle     String? @db.VarChar(255)
   approvedById        String?
   approvedAt          DateTime?
-  approvedSignature   String?
-  hrCertifiedByName   String?
+  approvedSignature   String? @db.Text
+  hrCertifiedByName   String? @db.VarChar(255)
   hrCertifiedById     String?
   hrCertifiedAt       DateTime?
   stampAttachmentId   String?
@@ -896,14 +897,14 @@ model ValidationCheck {
   submissionId String
   runId        String
   ruleCode     String
-  name         String
+  name         String @db.VarChar(255)
   status       CheckStatus
   severity     ValidationSeverity
   calculated   Decimal?    @db.Decimal(18, 2)
   expected     Decimal?    @db.Decimal(18, 2)
   difference   Decimal?    @db.Decimal(18, 2)
-  message      String
-  action       String?
+  message      String @db.Text
+  action       String? @db.VarChar(255)
   form         FormCode
   field        String?
   sortOrder    Int         @default(0)
@@ -928,8 +929,8 @@ model ApprovalStep {
   fromStatus   SubmissionStatus?
   toStatus     SubmissionStatus
   actorId      String?
-  actorName    String?
-  comment      String?
+  actorName    String? @db.VarChar(255)
+  comment      String? @db.Text
   createdAt    DateTime          @default(now())
 
   submission BudgetSubmission @relation(fields: [submissionId], references: [id])
@@ -946,7 +947,7 @@ model BudgetReview {
   stage        WorkflowStage
   reviewerId   String
   decision     ReviewDecision?
-  summary      String?
+  summary      String? @db.Text
   startedAt    DateTime        @default(now())
   completedAt  DateTime?
 
@@ -963,12 +964,12 @@ model CorrectionItem {
   submissionId       String
   reviewId           String?
   form               FormCode
-  section            String?
-  field              String?
-  comment            String
-  requiredCorrection String
+  section            String? @db.VarChar(255)
+  field              String? @db.VarChar(255)
+  comment            String @db.Text
+  requiredCorrection String @db.Text
   status             CorrectionStatus @default(OPEN)
-  resolutionNote     String?
+  resolutionNote     String? @db.Text
   resolvedById       String?
   resolvedAt         DateTime?
   verifiedById       String?
@@ -990,7 +991,7 @@ model Comment {
   form         FormCode?
   authorId     String
   parentId     String?
-  body         String
+  body         String @db.Text
   createdAt    DateTime  @default(now())
   editedAt     DateTime?
   deletedAt    DateTime?
@@ -1010,14 +1011,14 @@ model Attachment {
   entityType   String
   entityId     String
   form         FormCode?
-  section      String?
+  section      String? @db.VarChar(255)
   category     AttachmentCategory @default(OTHER)
-  description  String?
-  fileName     String
+  description  String? @db.Text
+  fileName     String @db.VarChar(255)
   mimeType     String
   size         Int
   sha256       String
-  storagePath  String
+  storagePath  String @db.VarChar(500)
   uploadedById String
   uploadedAt   DateTime           @default(now())
   deletedAt    DateTime?
@@ -1034,9 +1035,9 @@ model Notification {
   id         String           @id @default(cuid())
   userId     String
   type       NotificationType
-  title      String
-  body       String
-  link       String?
+  title      String @db.VarChar(255)
+  body       String @db.Text
+  link       String? @db.VarChar(500)
   entityType String?
   entityId   String?
   dedupeKey  String?
@@ -1091,7 +1092,7 @@ model ExpenditureExecution {
   month         Int
   plannedAmount Decimal    @default(0) @db.Decimal(18, 2)
   actualAmount  Decimal    @default(0) @db.Decimal(18, 2)
-  remarks       String?
+  remarks       String? @db.Text
   source        DataSource @default(MANUAL)
   enteredById   String?
   createdAt     DateTime   @default(now())
@@ -1114,7 +1115,7 @@ model RevenueExecution {
   month        Int
   targetAmount Decimal    @default(0) @db.Decimal(18, 2)
   actualAmount Decimal    @default(0) @db.Decimal(18, 2)
-  remarks      String?
+  remarks      String? @db.Text
   source       DataSource @default(MANUAL)
   enteredById  String?
   createdAt    DateTime   @default(now())
@@ -1135,15 +1136,15 @@ model Commitment {
   mdaId          String
   budgetCodeId   String
   reference      String
-  description    String
-  supplier       String?
+  description    String @db.Text
+  supplier       String? @db.VarChar(255)
   amount         Decimal          @db.Decimal(18, 2)
   commitmentDate DateTime         @db.Date
   status         CommitmentStatus @default(COMMITTED)
   obligatedAt    DateTime?
   liquidatedAt   DateTime?
   cancelledAt    DateTime?
-  cancelReason   String?
+  cancelReason   String? @db.Text
   source         DataSource       @default(MANUAL)
   createdById    String?
   createdAt      DateTime         @default(now())
@@ -1165,17 +1166,17 @@ model Commitment {
 model Import {
   id           String       @id @default(cuid())
   profile      String
-  fileName     String
+  fileName     String @db.VarChar(255)
   fileSize     Int
   fileHash     String
-  storagePath  String
+  storagePath  String @db.VarChar(500)
   status       ImportStatus @default(UPLOADED)
   budgetYearId String?
   mdaId        String?
   options      Json?
   detected     Json?
   summary      Json?
-  errorMessage String?
+  errorMessage String? @db.Text
   createdById  String
   createdAt    DateTime     @default(now())
   validatedAt  DateTime?
@@ -1211,8 +1212,8 @@ model ImportRow {
 
 model SavedReport {
   id          String   @id @default(cuid())
-  name        String
-  description String?
+  name        String @db.VarChar(255)
+  description String? @db.Text
   ownerId     String
   isShared    Boolean  @default(false)
   config      Json
@@ -1228,18 +1229,18 @@ model SavedReport {
 model AuditLog {
   id           BigInt      @id @default(autoincrement())
   userId       String?
-  userName     String?
+  userName     String? @db.VarChar(255)
   action       AuditAction
   entityType   String
   entityId     String?
   mdaId        String?
   budgetYearId String?
-  summary      String?
+  summary      String? @db.Text
   oldValue     Json?
   newValue     Json?
-  reason       String?
+  reason       String? @db.Text
   ip           String?
-  userAgent    String?
+  userAgent    String? @db.Text
   createdAt    DateTime    @default(now())
 
   user User? @relation(fields: [userId], references: [id])

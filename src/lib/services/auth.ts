@@ -23,7 +23,7 @@ export async function authenticate(identifier: string, password: string, meta: {
   if (!ipOk || !idOk) return { ok: false, reason: "RATE_LIMITED" };
 
   const user = await prisma.user.findFirst({
-    where: { deletedAt: null, OR: [{ email: { equals: id, mode: "insensitive" } }, { username: { equals: id, mode: "insensitive" } }] },
+    where: { deletedAt: null, OR: [{ email: { equals: id } }, { username: { equals: id } }] },
   });
   const pseudoActor = (u?: { id: string; fullName: string }) =>
     ({ id: u?.id ?? "system", name: u?.fullName ?? identifier.slice(0, 100), email: "", jobTitle: null, locale: "en", roles: [], permissions: new Set(), assignments: [], allMdas: false, approvedOnly: false, ip: meta.ip, userAgent: meta.userAgent }) as Actor;

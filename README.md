@@ -22,8 +22,11 @@ use the Africa/Mogadishu time zone (both configurable).
 
 ## Quick start
 
-Requirements: Node.js 22 or later. No separate PostgreSQL installation is needed for
-development — `npm run db:start` runs an embedded PostgreSQL 18 server from npm.
+Requirements: Node.js 22 or later and MySQL 8+ or MariaDB 10.4+ — for example the
+MariaDB included with [XAMPP](https://www.apachefriends.org). The default `.env`
+settings match XAMPP (user `root`, no password); copy `.env.example` to `.env` and
+adjust `DATABASE_URL` for another server. `npm run setup` starts XAMPP's MariaDB if it
+is not running, then creates the `gbms` database, its tables and the seed data.
 
 ```bash
 npm install
@@ -51,8 +54,7 @@ Start the application and open the URL it prints (http://localhost:3000 by defau
 npm run dev
 ```
 
-The embedded database keeps running in the background. Stop it with
-`npm run db:stop`; after a reboot, start it again with `npm run db:start`.
+After a reboot, start MySQL from the XAMPP Control Panel or with `npm run db:start`.
 
 ## Development accounts
 
@@ -73,8 +75,9 @@ user list. **Never load the development seed into a production database** — us
 | `npm run build` / `npm start` | Production build / server |
 | `npm run typecheck` | TypeScript check |
 | `npm run lint` | ESLint |
-| `npm run db:start` / `db:stop` / `db:status` | Embedded PostgreSQL (development) |
-| `npm run db:migrate` | Apply migrations (`prisma migrate deploy`) |
+| `npm run db:start` / `db:status` | Start / check the local MySQL/MariaDB (XAMPP) |
+| `npm run db:deploy` | Apply migrations, install the integrity triggers and, on an empty database, load the seed |
+| `npm run db:migrate` | Apply migrations only (`prisma migrate deploy`) |
 | `npm run db:seed` | Load seed data (skips development data if budgets already exist) |
 | `npm run db:reset` | Drop and recreate the development database, then seed (destructive) |
 | `npm run create-admin -- --username … --email … --name "…"` | Create an administrator with a one-time temporary password |
@@ -86,8 +89,10 @@ user list. **Never load the development seed into a production database** — us
 - **Next.js 16 (App Router)**, React 19, TypeScript, Tailwind CSS 4 and shadcn/ui
   components; Recharts for charts; TanStack Table for data tables; React Hook Form
   with Zod for forms.
-- **PostgreSQL** with **Prisma 7** (driver adapter `@prisma/adapter-pg`). The generated
-  client is in `src/generated/prisma`.
+- **MySQL 8+ / MariaDB 10.4+** with **Prisma 7** (driver adapter
+  `@prisma/adapter-mariadb`). The generated client is in `src/generated/prisma`.
+  Database triggers (`prisma/sql/integrity.mjs`, installed by `npm run db:deploy`)
+  keep approved budgets locked and the audit trail append-only even for direct SQL.
 - **Business logic lives in services** (`src/lib/services`), which receive an `Actor`
   (the signed-in user with permissions and MDA assignments) and enforce authorisation,
   validation and auditing. Pages, server actions and route handlers are thin: they
@@ -109,7 +114,7 @@ src/
   lib/exports/          Form 4 workbook, PDF helpers, CSV
   lib/reports/          Report catalogue, renderers (PDF/Excel/CSV), report builder
   lib/i18n/             English and Somali dictionaries
-prisma/                 Schema, migrations (incl. integrity triggers) and seed
+prisma/                 Schema, migrations, integrity triggers (sql/) and seed
 tests/                  unit, integration and e2e tests
 data/                   Reference workbook and the official Form 4 template
 ```
@@ -200,23 +205,21 @@ and codes map to the database and to the official forms.
 ## Production deployment
 
 **Hostinger:** see [DEPLOYMENT.md](DEPLOYMENT.md) for a step-by-step guide to deploying
-the demo as a Hostinger Node.js web app with a managed PostgreSQL database.
+the demo as a Hostinger Node.js web app with the plan's MySQL database.
 
 On any other server:
 
-1. Provision PostgreSQL 16 or later and set `DATABASE_URL`.
+1. Provision MySQL 8+ or MariaDB 10.4+ (utf8mb4) and set `DATABASE_URL`
+   (`mysql://USER:PASSWORD@HOST:3306/DATABASE`).
 2. Set a strong, unique `AUTH_SECRET`, `SECURE_COOKIES=true` and serve the application
    over HTTPS.
 3. Set `STORAGE_DIR` to persistent storage that is backed up together with the
    database (attachments and uploaded import files).
-4. Apply migrations and load configuration and reference data only:
+4. Apply migrations, install the integrity triggers and load configuration and
+   reference data only:
 
 ```bash
-npx prisma migrate deploy
-```
-
-```bash
-SEED_SKIP_DEV=true npm run db:seed
+SEED_SKIP_DEV=true npm run db:deploy
 ```
 
 5. Build and start:

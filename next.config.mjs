@@ -30,7 +30,7 @@ const securityHeaders = [
 /** @type {import("next").NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
-  serverExternalPackages: ["pdfmake", "exceljs", "pg", "@prisma/adapter-pg", "bcryptjs"],
+  serverExternalPackages: ["pdfmake", "exceljs", "mariadb", "@prisma/adapter-mariadb", "bcryptjs"],
   experimental: {
     authInterrupts: true,
     serverActions: {

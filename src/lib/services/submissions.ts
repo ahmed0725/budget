@@ -132,7 +132,7 @@ export async function listSubmissions(actor: Actor, filters: SubmissionFilters =
     ...(filters.type ? { type: filters.type } : {}),
     status: filters.status?.length ? { in: statuses ? filters.status.filter((s) => statuses.includes(s as "APPROVED")) : filters.status } : statuses ? { in: statuses } : undefined,
     ...(filters.search
-      ? { OR: [{ mda: { code: { contains: filters.search, mode: "insensitive" } } }, { mda: { name: { contains: filters.search, mode: "insensitive" } } }, { mda: { nameEn: { contains: filters.search, mode: "insensitive" } } }] }
+      ? { OR: [{ mda: { code: { contains: filters.search } } }, { mda: { name: { contains: filters.search } } }, { mda: { nameEn: { contains: filters.search } } }] }
       : {}),
   };
   const [total, rows] = await Promise.all([

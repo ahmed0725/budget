@@ -53,63 +53,63 @@ function levelFor(f: DrillFilters, hasChildren: boolean): DrillLevel {
 export async function drilldown(actor: Actor, f: DrillFilters): Promise<{ level: DrillLevel; rows: DrillRow[]; total: { budget: number; actual: number; rate: number | null }; crumbs: Crumb[] }> {
   const code = f.codeId ? await prisma.budgetCode.findUnique({ where: { id: f.codeId }, select: { id: true, path: true, code: true, name: true, nameEn: true, _count: { select: { children: true } } } }) : null;
   const level = levelFor(f, Boolean(code && code._count.children > 0));
-  const kindSql = Prisma.sql`${f.kind}::"BudgetKind"`;
+  const kindSql = Prisma.sql`${f.kind}`;
 
   const source =
     f.measure === "budget"
       ? Prisma.sql`
         WITH ${effectiveCte(actor, [f.year], { mdaId: f.mdaId, sectorId: f.sectorId })},
         src AS (
-          SELECT e."mdaId", l."budgetCodeId", l.amount AS budget, 0::numeric AS actual
-          FROM eff e JOIN budget_lines l ON l."submissionId" = e.id AND l.kind = ${kindSql}
+          SELECT e.mdaId, l.budgetCodeId, l.amount AS budget, CAST(0 AS DECIMAL(18,2)) AS actual
+          FROM eff e JOIN budget_lines l ON l.submissionId = e.id AND l.kind = ${kindSql}
         )`
       : Prisma.sql`
         WITH src AS (
-          SELECT x."mdaId", x."budgetCodeId", x."revisedAmount" AS budget, 0::numeric AS actual
-          FROM budget_execution x JOIN budget_years y ON y.id = x."budgetYearId"
+          SELECT x.mdaId, x.budgetCodeId, x.revisedAmount AS budget, CAST(0 AS DECIMAL(18,2)) AS actual
+          FROM budget_execution x JOIN budget_years y ON y.id = x.budgetYearId
           WHERE y.year = ${f.year} AND x.kind = ${kindSql} ${scopeSql(actor, "x")}
           UNION ALL
-          SELECT x."mdaId", x."budgetCodeId", 0::numeric, x."actualAmount"
-          FROM ${Prisma.raw(f.kind === "EXPENDITURE" ? "expenditure_execution" : "revenue_execution")} x JOIN budget_years y ON y.id = x."budgetYearId"
+          SELECT x.mdaId, x.budgetCodeId, CAST(0 AS DECIMAL(18,2)), x.actualAmount
+          FROM ${Prisma.raw(f.kind === "EXPENDITURE" ? "expenditure_execution" : "revenue_execution")} x JOIN budget_years y ON y.id = x.budgetYearId
           WHERE y.year = ${f.year} ${scopeSql(actor, "x")}
         )`;
 
   const filters = Prisma.sql`
-    ${f.sectorId ? Prisma.sql`AND m."sectorId" = ${f.sectorId}` : Prisma.empty}
+    ${f.sectorId ? Prisma.sql`AND m.sectorId = ${f.sectorId}` : Prisma.empty}
     ${f.mdaId ? Prisma.sql`AND m.id = ${f.mdaId}` : Prisma.empty}
-    ${f.categoryId ? Prisma.sql`AND bc."categoryId" = ${f.categoryId}` : Prisma.empty}
+    ${f.categoryId ? Prisma.sql`AND bc.categoryId = ${f.categoryId}` : Prisma.empty}
     ${code ? Prisma.sql`AND (bc.path = ${code.path} OR bc.path LIKE ${code.path + "/%"})` : Prisma.empty}`;
 
   let group: Prisma.Sql;
   switch (level) {
     case "sector":
-      group = Prisma.sql`SELECT s.id, s.code, s.name AS label, s."nameEn" AS alt, SUM(src.budget)::text AS budget, SUM(src.actual)::text AS actual
-        FROM src JOIN mdas m ON m.id = src."mdaId" JOIN budget_codes bc ON bc.id = src."budgetCodeId" JOIN sectors s ON s.id = m."sectorId"
-        WHERE TRUE ${filters} GROUP BY s.id, s.code, s.name, s."nameEn"`;
+      group = Prisma.sql`SELECT s.id, s.code, s.name AS label, s.nameEn AS alt, SUM(src.budget) AS budget, SUM(src.actual) AS actual
+        FROM src JOIN mdas m ON m.id = src.mdaId JOIN budget_codes bc ON bc.id = src.budgetCodeId JOIN sectors s ON s.id = m.sectorId
+        WHERE TRUE ${filters} GROUP BY s.id, s.code, s.name, s.nameEn`;
       break;
     case "mda":
     case "mdaOfCode":
-      group = Prisma.sql`SELECT m.id, m.code, m.name AS label, m."nameEn" AS alt, SUM(src.budget)::text AS budget, SUM(src.actual)::text AS actual
-        FROM src JOIN mdas m ON m.id = src."mdaId" JOIN budget_codes bc ON bc.id = src."budgetCodeId"
-        WHERE TRUE ${filters} GROUP BY m.id, m.code, m.name, m."nameEn"`;
+      group = Prisma.sql`SELECT m.id, m.code, m.name AS label, m.nameEn AS alt, SUM(src.budget) AS budget, SUM(src.actual) AS actual
+        FROM src JOIN mdas m ON m.id = src.mdaId JOIN budget_codes bc ON bc.id = src.budgetCodeId
+        WHERE TRUE ${filters} GROUP BY m.id, m.code, m.name, m.nameEn`;
       break;
     case "category":
-      group = Prisma.sql`SELECT COALESCE(c.id, 'none') AS id, c.code, COALESCE(c.name, 'Unclassified') AS label, c."nameSo" AS alt, SUM(src.budget)::text AS budget, SUM(src.actual)::text AS actual
-        FROM src JOIN mdas m ON m.id = src."mdaId" JOIN budget_codes bc ON bc.id = src."budgetCodeId" LEFT JOIN budget_categories c ON c.id = bc."categoryId"
-        WHERE TRUE ${filters} GROUP BY c.id, c.code, c.name, c."nameSo"`;
+      group = Prisma.sql`SELECT COALESCE(c.id, 'none') AS id, c.code, COALESCE(c.name, 'Unclassified') AS label, c.nameSo AS alt, SUM(src.budget) AS budget, SUM(src.actual) AS actual
+        FROM src JOIN mdas m ON m.id = src.mdaId JOIN budget_codes bc ON bc.id = src.budgetCodeId LEFT JOIN budget_categories c ON c.id = bc.categoryId
+        WHERE TRUE ${filters} GROUP BY c.id, c.code, c.name, c.nameSo`;
       break;
     case "item":
       // Economic items: the 4-digit ancestor of each line (or the line code itself when shorter).
-      group = Prisma.sql`SELECT a.id, a.code, a.name AS label, a."nameEn" AS alt, SUM(src.budget)::text AS budget, SUM(src.actual)::text AS actual
-        FROM src JOIN mdas m ON m.id = src."mdaId" JOIN budget_codes bc ON bc.id = src."budgetCodeId"
-        JOIN budget_codes a ON a.kind = bc.kind AND (bc.path = a.path OR bc.path LIKE a.path || '/%') AND a.level = LEAST(bc.level, 4)
-        WHERE TRUE ${filters} GROUP BY a.id, a.code, a.name, a."nameEn"`;
+      group = Prisma.sql`SELECT a.id, a.code, a.name AS label, a.nameEn AS alt, SUM(src.budget) AS budget, SUM(src.actual) AS actual
+        FROM src JOIN mdas m ON m.id = src.mdaId JOIN budget_codes bc ON bc.id = src.budgetCodeId
+        JOIN budget_codes a ON a.kind = bc.kind AND (bc.path = a.path OR bc.path LIKE CONCAT(a.path, '/%')) AND a.level = LEAST(bc.level, 4)
+        WHERE TRUE ${filters} GROUP BY a.id, a.code, a.name, a.nameEn`;
       break;
     case "code":
-      group = Prisma.sql`SELECT a.id, a.code, a.name AS label, a."nameEn" AS alt, SUM(src.budget)::text AS budget, SUM(src.actual)::text AS actual
-        FROM src JOIN mdas m ON m.id = src."mdaId" JOIN budget_codes bc ON bc.id = src."budgetCodeId"
-        JOIN budget_codes a ON a."parentId" = ${code!.id} AND (bc.path = a.path OR bc.path LIKE a.path || '/%')
-        WHERE TRUE ${filters} GROUP BY a.id, a.code, a.name, a."nameEn"`;
+      group = Prisma.sql`SELECT a.id, a.code, a.name AS label, a.nameEn AS alt, SUM(src.budget) AS budget, SUM(src.actual) AS actual
+        FROM src JOIN mdas m ON m.id = src.mdaId JOIN budget_codes bc ON bc.id = src.budgetCodeId
+        JOIN budget_codes a ON a.parentId = ${code!.id} AND (bc.path = a.path OR bc.path LIKE CONCAT(a.path, '/%'))
+        WHERE TRUE ${filters} GROUP BY a.id, a.code, a.name, a.nameEn`;
       break;
   }
   const raw = await prisma.$queryRaw<{ id: string; code: string | null; label: string; alt: string | null; budget: string | null; actual: string | null }[]>`${source} ${group!}`;

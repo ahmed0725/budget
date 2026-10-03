@@ -92,23 +92,23 @@ async function budgetDetails(actor: Actor, c: BuilderConfig, year: number, datas
   const en = locale === "en";
   const rows = await prisma.$queryRaw<{ sectorid: string; sector: string; sectoren: string | null; mdaid: string; mdacode: string; mdaname: string; mdaen: string | null; catid: string | null; catname: string | null; catso: string | null; kind: string; code: string; codename: string; codeen: string | null; itemcode: string | null; itemname: string | null; itemen: string | null; amount: string }[]>`
     WITH ${effectiveCte(actor, [year], { dataset, mdaId: c.mdaId ?? undefined, sectorId: c.sectorId ?? undefined })}
-    SELECT s.id AS sectorid, s.code || ' ' || s.name AS sector, s.code || ' ' || COALESCE(s."nameEn", s.name) AS sectoren,
-      m.id AS mdaid, m.code AS mdacode, m.name AS mdaname, m."nameEn" AS mdaen,
-      c.id AS catid, c.name AS catname, c."nameSo" AS catso, bc.kind::text AS kind,
-      bc.code, bc.name AS codename, bc."nameEn" AS codeen, a.code AS itemcode, a.name AS itemname, a."nameEn" AS itemen,
-      SUM(l.amount)::text AS amount
+    SELECT s.id AS sectorid, CONCAT(s.code, ' ', s.name) AS sector, CONCAT(s.code, ' ', COALESCE(s.nameEn, s.name)) AS sectoren,
+      m.id AS mdaid, m.code AS mdacode, m.name AS mdaname, m.nameEn AS mdaen,
+      c.id AS catid, c.name AS catname, c.nameSo AS catso, bc.kind AS kind,
+      bc.code, bc.name AS codename, bc.nameEn AS codeen, a.code AS itemcode, a.name AS itemname, a.nameEn AS itemen,
+      SUM(l.amount) AS amount
     FROM eff e
-    JOIN budget_lines l ON l."submissionId" = e.id
-    JOIN budget_codes bc ON bc.id = l."budgetCodeId"
-    JOIN mdas m ON m.id = e."mdaId"
-    JOIN sectors s ON s.id = m."sectorId"
-    LEFT JOIN budget_categories c ON c.id = bc."categoryId"
-    LEFT JOIN budget_codes a ON a.kind = bc.kind AND (bc.path = a.path OR bc.path LIKE a.path || '/%') AND a.level = LEAST(bc.level, 4)
+    JOIN budget_lines l ON l.submissionId = e.id
+    JOIN budget_codes bc ON bc.id = l.budgetCodeId
+    JOIN mdas m ON m.id = e.mdaId
+    JOIN sectors s ON s.id = m.sectorId
+    LEFT JOIN budget_categories c ON c.id = bc.categoryId
+    LEFT JOIN budget_codes a ON a.kind = bc.kind AND (bc.path = a.path OR bc.path LIKE CONCAT(a.path, '/%')) AND a.level = LEAST(bc.level, 4)
     WHERE TRUE
-      ${c.kind !== "ALL" ? Prisma.sql`AND l.kind = ${c.kind}::"BudgetKind"` : Prisma.empty}
-      ${c.categoryId ? Prisma.sql`AND bc."categoryId" = ${c.categoryId}` : Prisma.empty}
+      ${c.kind !== "ALL" ? Prisma.sql`AND l.kind = ${c.kind}` : Prisma.empty}
+      ${c.categoryId ? Prisma.sql`AND bc.categoryId = ${c.categoryId}` : Prisma.empty}
       ${c.codePrefix ? Prisma.sql`AND bc.code LIKE ${c.codePrefix + "%"}` : Prisma.empty}
-    GROUP BY s.id, s.code, s.name, s."nameEn", m.id, m.code, m.name, m."nameEn", c.id, c.name, c."nameSo", bc.kind, bc.code, bc.name, bc."nameEn", a.code, a.name, a."nameEn"`;
+    GROUP BY s.id, s.code, s.name, s.nameEn, m.id, m.code, m.name, m.nameEn, c.id, c.name, c.nameSo, bc.kind, bc.code, bc.name, bc.nameEn, a.code, a.name, a.nameEn`;
   return rows.map((r) => ({
     sectorId: r.sectorid,
     sector: en ? (r.sectoren ?? r.sector) : r.sector,

@@ -314,7 +314,7 @@ export async function listImportRows(importId: string, filters: { status?: strin
     importId,
     ...(filters.status ? { status: filters.status as ImportRowStatus } : {}),
     ...(filters.sheet ? { sheetName: filters.sheet } : {}),
-    ...(filters.q ? { OR: [{ data: { path: ["code"], string_contains: filters.q } }, { data: { path: ["mdaCode"], string_contains: filters.q } }] } : {}),
+    ...(filters.q ? { OR: [{ data: { path: "$.code", string_contains: filters.q } }, { data: { path: "$.mdaCode", string_contains: filters.q } }] } : {}),
   };
   const [total, rows, byStatus, sheets] = await Promise.all([
     prisma.importRow.count({ where }),

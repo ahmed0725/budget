@@ -52,7 +52,7 @@ function where(f: AuditFilters): Prisma.AuditLogWhereInput {
     ...(f.mdaId ? { mdaId: f.mdaId } : {}),
     ...(f.from && day.test(f.from) ? { createdAt: { gte: new Date(`${f.from}T00:00:00+03:00`) } } : {}),
     ...(f.to && day.test(f.to) ? { AND: [{ createdAt: { lt: new Date(new Date(`${f.to}T00:00:00+03:00`).getTime() + 86_400_000) } }] } : {}),
-    ...(f.q ? { OR: [{ summary: { contains: f.q, mode: "insensitive" } }, { userName: { contains: f.q, mode: "insensitive" } }, { entityId: f.q }, { ip: f.q }] } : {}),
+    ...(f.q ? { OR: [{ summary: { contains: f.q } }, { userName: { contains: f.q } }, { entityId: f.q }, { ip: f.q }] } : {}),
   };
 }
 

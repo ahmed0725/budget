@@ -36,7 +36,7 @@ export async function listBudgetItems(actor: Actor, f: ListFilters & { kind?: "R
     submissionId: { in: subs.map((s) => s.id) },
     ...(f.kind ? { kind: f.kind } : {}),
     ...(f.categoryId ? { budgetCode: { categoryId: f.categoryId } } : {}),
-    ...(f.q ? { OR: [{ budgetCode: { code: { startsWith: f.q } } }, { budgetCode: { name: { contains: f.q, mode: "insensitive" } } }, { budgetCode: { nameEn: { contains: f.q, mode: "insensitive" } } }, { description: { contains: f.q, mode: "insensitive" } }] } : {}),
+    ...(f.q ? { OR: [{ budgetCode: { code: { startsWith: f.q } } }, { budgetCode: { name: { contains: f.q } } }, { budgetCode: { nameEn: { contains: f.q } } }, { description: { contains: f.q } }] } : {}),
   };
   const [key, dir] = (f.sort ?? "mda.asc").split(".") as [string, "asc" | "desc"];
   const [total, sums, lines] = await Promise.all([
@@ -131,7 +131,7 @@ export async function listCapitalProjects(actor: Actor, f: ListFilters & { statu
       ...(f.mdaId ? { mdaId: f.mdaId } : {}),
       ...(f.sectorId ? { mda: { sectorId: f.sectorId } } : {}),
       ...(delayed ? { expectedCompletionDate: { lt: today }, status: { notIn: ["COMPLETED", "CANCELLED"] } } : f.status ? { status: f.status as ProjectStatus } : {}),
-      ...(f.q ? { OR: [{ name: { contains: f.q, mode: "insensitive" } }, { projectCode: { contains: f.q, mode: "insensitive" } }, { location: { contains: f.q, mode: "insensitive" } }] } : {}),
+      ...(f.q ? { OR: [{ name: { contains: f.q } }, { projectCode: { contains: f.q } }, { location: { contains: f.q } }] } : {}),
       // Projects in this year's budgets, plus active projects without an allocation this year.
       AND: [{ OR: [{ id: { in: allocations.map((a) => a.capitalProjectId!) } }, { status: { in: ["ACTIVE", "APPROVED"] } }] }],
     },
